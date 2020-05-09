@@ -1,0 +1,3 @@
+dev/*
+*.json
+.ipynb_checkpoints/*
