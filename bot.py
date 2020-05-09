@@ -142,6 +142,59 @@ players_query = {
     }
 }
 
+unique_count_query = {
+    "aggs": {
+        "2": {
+            "range": {
+                "field": "account_id",
+                "ranges": [
+                    {
+                        "from": None,
+                        "to": 15400000
+                    },
+                    {
+                        "from": 1073740000,
+                        "to": None
+                    },
+                    {}
+                ],
+                "keyed": True
+            },
+            "aggs": {"1": {"cardinality": {"field": "account_id"}}}
+        }
+    },
+    "size": 0,
+    "_source": {"excludes": []},
+    "stored_fields": ["*"],
+    "script_fields": {},
+    "docvalue_fields": [
+        {
+            "field": "date",
+            "format": "date_time"
+        }
+    ],
+    "query": {
+        "bool": {
+            "must": [
+                {"match_all": {}},
+                {"match_all": {}},
+                {
+                    "range": {
+                        "date": {
+                            "gte": None,
+                            "lte": None,
+                            "format": "date"
+                        }
+                    }
+                }
+            ],
+            "filter": [],
+            "should": [],
+            "must_not": []
+        }
+    }
+}
+
 BATTLES_PNG = '/tmp/battles.png'
 PLAYERS_PNG = '/tmp/players.png'
 
@@ -164,12 +217,13 @@ def manage_config(mode, filename='config.json'):
                     'elasticsearch': {
                         'hosts': ['127.0.0.1']
                     },
-                    'es index': 'diff_battles-*'
+                    'es index': 'diff_battles-*',
+                    'unique': [7, 14, 30]
                 },
                 f
             )
 
-def query_es(config):
+def query_es_for_graphs(config):
     now = datetime.utcnow()
     then = now - timedelta(days=config['days'])
     es = Elasticsearch(**config['elasticsearch'])
@@ -188,6 +242,18 @@ def query_es(config):
     players_ps = [b['3']['buckets']['ps']['doc_count'] for b in players['aggregations']['2']['buckets']]
     dates = [b['key_as_string'].split('T')[0] for b in players['aggregations']['2']['buckets']]
     return dates, battles_xbox, battles_ps, players_xbox, players_ps
+
+def query_es_for_unique(config):
+    now = datetime.utcnow()
+    es = Elasticsearch(**config['elasticsearch'])
+    unique = {'Xbox': [], 'Playstation': []}
+    unique_count_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    for earliest in config['unique']:
+        unique_count_query['query']['bool']['must'][-1]['range']['date']['gte'] = (now - timedelta(days=earliest)).strftime('%Y-%m-%d')
+        results = es.search(index=config['es index'], body=unique_count_query)
+        unique['Xbox'].append(results['aggregations']['2']['buckets']['*-1.54E7']['1']['value'])
+        unique['Playstation'].append(results['aggregations']['2']['buckets']['1.07374E9-*']['1']['value'])
+    return unique
 
 def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps):
     # Players PNG
@@ -226,11 +292,26 @@ def upload_to_twitter(config):
         media_ids=[players.media_id, battles.media_id]
     )
 
+def share_unique_with_twitter(config, unique):
+    auth = OAuthHandler(config['twitter']['api key'], config['twitter']['api secret key'])
+    auth.set_access_token(config['twitter']['access token'], config['twitter']['access token secret'])
+    api = API(auth)
+    status = 'Unique Player Count For {} Over Time\n{}'
+    formatting = '{} days: {}'
+    for key, values in unique.items():
+        api.update_status(
+            status=status.format(
+                key,
+                '\n'.join(map(lambda l: formatting.format(config['unique'][values.index(l)], l), values))
+            )
+        )
+
 if __name__ == '__main__':
     agp = ArgumentParser(description='Bot for processing tracker data and uploading to Twitter')
     agp.add_argument('config', help='Config file location')
     args = agp.parse_args()
     config = manage_config('read', args.config)
     # dates, battles_xbox, battles_ps, players_xbox, players_ps = query_es(config)
-    create_graphs(*query_es(config))
+    create_graphs(*query_es_for_graphs(config))
     upload_to_twitter(config)
+    share_unique_with_twitter(config, query_es_for_unique(config))
