@@ -223,12 +223,20 @@ def query_es_for_graphs(config):
     players_xbox = []
     players_ps = []
     for bucket in battles['aggregations']['2']['buckets']:
+        if not bucket['3']['buckets']:
+            battles_xbox.append(0)
+            battles_ps.append(0)
+            continue
         for subbucket in bucket['3']['buckets']:
             if subbucket['key'] == 'xbox':
                 battles_xbox.append(subbucket['doc_count'])
             else:
                 battles_ps.append(subbucket['doc_count'])
     for bucket in players['aggregations']['2']['buckets']:
+        if not bucket['3']['buckets']:
+            players_xbox.append(0)
+            players_ps.append(0)
+            continue
         for subbucket in bucket['3']['buckets']:
             if subbucket['key'] == 'xbox':
                 players_xbox.append(subbucket['doc_count'])
