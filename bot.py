@@ -225,15 +225,15 @@ def query_es_for_graphs(config):
     for bucket in battles['aggregations']['2']['buckets']:
         for subbucket in bucket['3']['buckets']:
             if subbucket['key'] == 'xbox':
-                battles_xbox.append(subbucket['1']['value'])
+                battles_xbox.append(subbucket['doc_count'])
             else:
-                battles_ps.append(subbucket['1']['value'])
+                battles_ps.append(subbucket['doc_count'])
     for bucket in players['aggregations']['2']['buckets']:
         for subbucket in bucket['3']['buckets']:
             if subbucket['key'] == 'xbox':
-                players_xbox.append(subbucket['1']['value'])
+                players_xbox.append(subbucket['doc_count'])
             else:
-                players_ps.append(subbucket['1']['value'])
+                players_ps.append(subbucket['doc_count'])
     dates = [b['key_as_string'].split('T')[0] for b in players[
         'aggregations']['2']['buckets']]
     return dates, battles_xbox, battles_ps, players_xbox, players_ps
