@@ -16,22 +16,11 @@ battles_query = {
             },
             "aggs": {
                 "3": {
-                    "filters": {
-                        "filters": {
-                            "xbox": {
-                                "query_string": {
-                                    "query": "account_id:<1073740000",
-                                    "analyze_wildcard": True,
-                                    "default_field": "*"
-                                }
-                            },
-                            "ps": {
-                                "query_string": {
-                                    "query": "account_id:>=1073740000",
-                                    "analyze_wildcard": True,
-                                    "default_field": "*"
-                                }
-                            }
+                    "terms": {
+                        "field": "console.keyword",
+                        "size": 2,
+                        "order": {
+                            "1": "desc"
                         }
                     },
                     "aggs": {
@@ -88,30 +77,19 @@ players_query = {
             },
             "aggs": {
                 "3": {
-                  "filters": {
-                      "filters": {
-                          "xbox": {
-                              "query_string": {
-                                  "query": "account_id:<1073740000",
-                                  "analyze_wildcard": True,
-                                  "default_field": "*"
-                                }
-                          },
-                          "ps": {
-                              "query_string": {
-                                  "query": "account_id:>=1073740000",
-                                  "analyze_wildcard": True,
-                                  "default_field": "*"
-                              }
-                          }
-                      }
-                  }
+                    "terms": {
+                        "field": "console.keyword",
+                        "size": 2,
+                        "order": {
+                            "_count": "desc"
+                        }
+                    }
                 }
             }
         }
     },
     "size": 0,
-    "_source": {"excludes":[]},
+    "_source": {"excludes": []},
     "stored_fields": ["*"],
     "script_fields": {},
     "docvalue_fields": [
@@ -145,22 +123,20 @@ players_query = {
 unique_count_query = {
     "aggs": {
         "2": {
-            "range": {
-                "field": "account_id",
-                "ranges": [
-                    {
-                        "from": None,
-                        "to": 15400000
-                    },
-                    {
-                        "from": 1073740000,
-                        "to": None
-                    },
-                    {}
-                ],
-                "keyed": True
+            "terms": {
+                "field": "console.keyword",
+                "size": 2,
+                "order": {
+                    "1": "desc"
+                }
             },
-            "aggs": {"1": {"cardinality": {"field": "account_id"}}}
+            "aggs": {
+                "1": {
+                    "cardinality": {
+                        "field": "account_id"
+                    }
+                }
+            }
         }
     },
     "size": 0,
@@ -198,6 +174,7 @@ unique_count_query = {
 BATTLES_PNG = '/tmp/battles.png'
 PLAYERS_PNG = '/tmp/players.png'
 
+
 def manage_config(mode, filename='config.json'):
     if mode == 'read':
         with open(filename) as f:
@@ -223,42 +200,67 @@ def manage_config(mode, filename='config.json'):
                 f
             )
 
+
 def query_es_for_graphs(config):
     now = datetime.utcnow()
     then = now - timedelta(days=config['days'])
     es = Elasticsearch(**config['elasticsearch'])
     # Setup queries
-    battles_query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    battles_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
-    players_query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    players_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    battles_query['query']['bool'][
+        'must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
+    battles_query['query']['bool'][
+        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    players_query['query']['bool'][
+        'must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
+    players_query['query']['bool'][
+        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
     # Query Elasticsearch
     battles = es.search(index=config['es index'], body=battles_query)
     players = es.search(index=config['es index'], body=players_query)
     # Filter numbers
-    battles_xbox = [b['3']['buckets']['xbox']['1']['value'] for b in battles['aggregations']['2']['buckets']]
-    battles_ps = [b['3']['buckets']['ps']['1']['value'] for b in battles['aggregations']['2']['buckets']]
-    players_xbox = [b['3']['buckets']['xbox']['doc_count'] for b in players['aggregations']['2']['buckets']]
-    players_ps = [b['3']['buckets']['ps']['doc_count'] for b in players['aggregations']['2']['buckets']]
-    dates = [b['key_as_string'].split('T')[0] for b in players['aggregations']['2']['buckets']]
+    battles_xbox = []
+    battles_ps = []
+    players_xbox = []
+    players_ps = []
+    for bucket in battles['aggregations']['2']['buckets']:
+        for subbucket in bucket['3']['buckets']:
+            if subbucket['key'] == 'xbox':
+                battles_xbox.append(subbucket['1']['value'])
+            else:
+                battles_ps.append(subbucket['1']['value'])
+    for bucket in players['aggregations']['2']['buckets']:
+        for subbucket in bucket['3']['buckets']:
+            if subbucket['key'] == 'xbox':
+                players_xbox.append(subbucket['1']['value'])
+            else:
+                players_ps.append(subbucket['1']['value'])
+    dates = [b['key_as_string'].split('T')[0] for b in players[
+        'aggregations']['2']['buckets']]
     return dates, battles_xbox, battles_ps, players_xbox, players_ps
+
 
 def query_es_for_unique(config):
     now = datetime.utcnow()
     es = Elasticsearch(**config['elasticsearch'])
     unique = {'Xbox': [], 'Playstation': []}
-    unique_count_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    unique_count_query['query']['bool'][
+        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
     for earliest in config['unique']:
-        unique_count_query['query']['bool']['must'][-1]['range']['date']['gte'] = (now - timedelta(days=earliest)).strftime('%Y-%m-%d')
+        unique_count_query['query']['bool']['must'][-1]['range']['date'][
+            'gte'] = (now - timedelta(days=earliest)).strftime('%Y-%m-%d')
         results = es.search(index=config['es index'], body=unique_count_query)
-        unique['Xbox'].append(results['aggregations']['2']['buckets']['*-1.54E7']['1']['value'])
-        unique['Playstation'].append(results['aggregations']['2']['buckets']['1.07374E9-*']['1']['value'])
+        for bucket in results['aggregations']['2']['buckets']:
+            if bucket['key'] == 'xbox':
+                unique['Xbox'].append(bucket['1']['value'])
+            else:
+                unique['Playstation'].append(bucket['1']['value'])
     return unique
+
 
 def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps):
     # Players PNG
     plt.clf()
-    plt.figure(figsize=(11,8), dpi=150)
+    plt.figure(figsize=(11, 8), dpi=150)
     plt.suptitle('Unique Players Per Platform')
     plt.xticks(rotation=45, ha='right')
     ax = plt.axes()
@@ -270,7 +272,7 @@ def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps):
     plt.savefig(PLAYERS_PNG)
     # Battles PNG
     plt.clf()
-    plt.figure(figsize=(11,8), dpi=150)
+    plt.figure(figsize=(11, 8), dpi=150)
     plt.suptitle('Total Battles Per Platform')
     plt.xticks(rotation=45, ha='right')
     ax = plt.axes()
@@ -281,9 +283,14 @@ def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps):
     plt.legend()
     plt.savefig(BATTLES_PNG)
 
+
 def upload_to_twitter(config):
-    auth = OAuthHandler(config['twitter']['api key'], config['twitter']['api secret key'])
-    auth.set_access_token(config['twitter']['access token'], config['twitter']['access token secret'])
+    auth = OAuthHandler(
+        config['twitter']['api key'],
+        config['twitter']['api secret key'])
+    auth.set_access_token(
+        config['twitter']['access token'],
+        config['twitter']['access token secret'])
     api = API(auth)
     battles = api.media_upload(BATTLES_PNG)
     players = api.media_upload(PLAYERS_PNG)
@@ -292,9 +299,14 @@ def upload_to_twitter(config):
         media_ids=[players.media_id, battles.media_id]
     )
 
+
 def share_unique_with_twitter(config, unique):
-    auth = OAuthHandler(config['twitter']['api key'], config['twitter']['api secret key'])
-    auth.set_access_token(config['twitter']['access token'], config['twitter']['access token secret'])
+    auth = OAuthHandler(
+        config['twitter']['api key'],
+        config['twitter']['api secret key'])
+    auth.set_access_token(
+        config['twitter']['access token'],
+        config['twitter']['access token secret'])
     api = API(auth)
     status = 'Unique Player Count For {} Over Time\n{}'
     formatting = '{} days: {}'
@@ -302,12 +314,14 @@ def share_unique_with_twitter(config, unique):
         api.update_status(
             status=status.format(
                 key,
-                '\n'.join(map(lambda l: formatting.format(config['unique'][values.index(l)], l), values))
+                '\n'.join(map(lambda l: formatting.format(
+                    config['unique'][values.index(l)], l), values))
             )
         )
 
 if __name__ == '__main__':
-    agp = ArgumentParser(description='Bot for processing tracker data and uploading to Twitter')
+    agp = ArgumentParser(
+        description='Bot for processing tracker data and uploading to Twitter')
     agp.add_argument('config', help='Config file location')
     args = agp.parse_args()
     config = manage_config('read', args.config)
