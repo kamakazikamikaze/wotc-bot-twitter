@@ -229,9 +229,9 @@ def query_es_for_graphs(config):
             continue
         for subbucket in bucket['3']['buckets']:
             if subbucket['key'] == 'xbox':
-                battles_xbox.append(subbucket['doc_count'])
+                battles_xbox.append(subbucket['1']['value'])
             else:
-                battles_ps.append(subbucket['doc_count'])
+                battles_ps.append(subbucket['1']['value'])
     for bucket in players['aggregations']['2']['buckets']:
         if not bucket['3']['buckets']:
             players_xbox.append(0)
