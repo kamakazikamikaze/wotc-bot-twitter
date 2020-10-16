@@ -269,7 +269,7 @@ def query_es_for_graphs(config):
     new_players_query['query']['bool'][
         'must'][-1]['range']['created_at']['gte'] = then.strftime('%Y-%m-%d')
     new_players_query['query']['bool'][
-        'must'][-1]['range']['created_at']['lte'] = now.strftime('%Y-%m-%d')
+        'must'][-1]['range']['created_at']['lt'] = now.strftime('%Y-%m-%d')
     # Query Elasticsearch
     battles = es.search(index=config['es index'], body=battles_query)
     players = es.search(index=config['es index'], body=players_query)
