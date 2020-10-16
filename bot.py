@@ -171,9 +171,60 @@ unique_count_query = {
     }
 }
 
+new_players_query = {
+    "aggs": {
+        "2": {
+            "date_histogram": {
+                "field": "created_at",
+                "interval": "1d",
+                "time_zone": "America/Chicago",
+                "min_doc_count": 1
+            }
+        },
+        "aggs": {
+            "3": {
+                "terms": {
+                    "field": "console.keyword",
+                    "size": 2,
+                    "order": {"_count": "desc"}
+                }
+            }
+        }
+    },
+    "size": 0,
+    "_source": {"excludes": []},
+    "stored_fields": ["*"],
+    "script_fields": {},
+    "docvalue_fields": [
+        {
+            "field": "created_at",
+            "format": "date_time"
+        }
+    ],
+    "query": {
+        "bool": {
+            "must": [
+                {"match_all": {}},
+                {"match_all": {}},
+                {
+                    "range": {
+                        "created_at": {
+                            "gte": "now-14d/d",
+                            "lt": "now"
+                        }
+                    }
+                }
+            ],
+            "filter": [],
+            "should": [],
+            "must_not": []
+        }
+    }
+}
+
 BATTLES_PNG = '/tmp/battles.png'
 PLAYERS_PNG = '/tmp/players.png'
-
+NEWPLAYERS_PNG = '/tmp/newplayers.png'
 
 def manage_config(mode, filename='config.json'):
     if mode == 'read':
@@ -196,8 +247,7 @@ def manage_config(mode, filename='config.json'):
                     },
                     'es index': 'diff_battles-*',
                     'unique': [7, 14, 30]
-                },
-                f
+                }
             )
 
 
@@ -217,11 +267,14 @@ def query_es_for_graphs(config):
     # Query Elasticsearch
     battles = es.search(index=config['es index'], body=battles_query)
     players = es.search(index=config['es index'], body=players_query)
+    newplayers = es.search(index='players', body=new_players_query)
     # Filter numbers
     battles_xbox = []
     battles_ps = []
     players_xbox = []
     players_ps = []
+    newplayers_xbox = []
+    newplayers_ps = []
     for bucket in battles['aggregations']['2']['buckets']:
         if not bucket['3']['buckets']:
             battles_xbox.append(0)
@@ -242,9 +295,18 @@ def query_es_for_graphs(config):
                 players_xbox.append(subbucket['doc_count'])
             else:
                 players_ps.append(subbucket['doc_count'])
+    for bucket in newplayers['aggregations']['2']['buckets']:
+        if not bucket['3']['buckets']:
+            newplayers_xbox.append(0)
+            newplayers_ps.append(0)
+        for subbucket in bucket['3']['buckets']:
+            if subbucket['key'] == 'xbox':
+                newplayers_xbox.append(subbucket['doc_count'])
+            else:
+                newplayers_ps.append(subbucket['doc_count'])
     dates = [b['key_as_string'].split('T')[0] for b in players[
         'aggregations']['2']['buckets']]
-    return dates, battles_xbox, battles_ps, players_xbox, players_ps
+    return dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_xbox, newplayers_ps
 
 
 def query_es_for_unique(config):
@@ -265,7 +327,7 @@ def query_es_for_unique(config):
     return unique
 
 
-def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps):
+def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_xbox, newplayers_ps):
     # Players PNG
     plt.clf()
     plt.figure(figsize=(11, 8), dpi=150)
@@ -290,6 +352,18 @@ def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps):
     plt.grid()
     plt.legend()
     plt.savefig(BATTLES_PNG)
+    # New Players PNG
+    plt.clf()
+    plt.figure(figsize=(11, 8), dpi=150)
+    plt.suptitle('New Players Per Platform')
+    plt.xticks(rotation=45, ha='right')
+    ax = plt.axes()
+    ax.ticklabel_format(useOffset=False, style='plain')
+    plt.plot(dates, newplayers_xbox, color='green', linewidth=2, label='Xbox')
+    plt.plot(dates, newplayers_ps, color='blue', linewidth=2, label='Playstation')
+    plt.grid()
+    plt.legend()
+    plt.savefig(NEWPLAYERS_PNG)
 
 
 def upload_to_twitter(config):
@@ -302,9 +376,10 @@ def upload_to_twitter(config):
     api = API(auth)
     battles = api.media_upload(BATTLES_PNG)
     players = api.media_upload(PLAYERS_PNG)
+    newplayers = api.media_upload(NEWPLAYERS_PNG)
     api.update_status(
         status=config['twitter']['message'],
-        media_ids=[players.media_id, battles.media_id]
+        media_ids=[players.media_id, battles.media_id, newplayers.media_id]
     )
 
 
