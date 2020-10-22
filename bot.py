@@ -10,9 +10,7 @@ battles_query = {
         "2": {
             "date_histogram": {
                 "field": "date",
-                "interval": "1d",
-                "time_zone": "America/Chicago",
-                "min_doc_count": 1
+                "interval": "1d"
             },
             "aggs": {
                 "3": {
@@ -71,9 +69,7 @@ players_query = {
         "2": {
             "date_histogram": {
                 "field": "date",
-                "interval": "1d",
-                "time_zone": "America/Chicago",
-                "min_doc_count": 1
+                "interval": "1d"
             },
             "aggs": {
                 "3": {
@@ -176,9 +172,7 @@ new_players_query = {
         "2": {
             "date_histogram": {
                 "field": "created_at",
-                "interval": "1d",
-                "time_zone": "America/Chicago",
-                "min_doc_count": 1
+                "interval": "1d"
             },
             "aggs": {
                 "3": {
@@ -211,8 +205,9 @@ new_players_query = {
                 {
                     "range": {
                         "created_at": {
-                            "gte": "now-14d/d",
-                            "lt": "now"
+                            "gte": None,
+                            "lt": None,
+                            "format": "date"
                         }
                     }
                 }
