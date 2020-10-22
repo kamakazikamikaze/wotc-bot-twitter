@@ -307,7 +307,9 @@ def query_es_for_graphs(config):
                 newplayers_ps.append(subbucket['doc_count'])
     dates = [b['key_as_string'].split('T')[0] for b in players[
         'aggregations']['2']['buckets']]
-    return dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_xbox, newplayers_ps
+    newplayers_dates = [b['key_as_string'].split('T')[0] for b in newplayers[
+        'aggregations']['2']['buckets']]
+    return dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps
 
 
 def query_es_for_unique(config):
@@ -328,7 +330,7 @@ def query_es_for_unique(config):
     return unique
 
 
-def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_xbox, newplayers_ps):
+def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps):
     # Players PNG
     plt.clf()
     plt.figure(figsize=(11, 8), dpi=150)
@@ -360,8 +362,8 @@ def create_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, new
     plt.xticks(rotation=45, ha='right')
     ax = plt.axes()
     ax.ticklabel_format(useOffset=False, style='plain')
-    plt.plot(dates, newplayers_xbox, color='green', linewidth=2, label='Xbox')
-    plt.plot(dates, newplayers_ps, color='blue', linewidth=2, label='Playstation')
+    plt.plot(newplayers_dates, newplayers_xbox, color='green', linewidth=2, label='Xbox')
+    plt.plot(newplayers_dates, newplayers_ps, color='blue', linewidth=2, label='Playstation')
     plt.grid()
     plt.legend()
     plt.savefig(NEWPLAYERS_PNG)
