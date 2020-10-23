@@ -10,7 +10,8 @@ battles_query = {
         "2": {
             "date_histogram": {
                 "field": "date",
-                "interval": "1d"
+                "interval": "1d",
+                "min_doc_count": 0
             },
             "aggs": {
                 "3": {
@@ -19,7 +20,8 @@ battles_query = {
                         "size": 2,
                         "order": {
                             "1": "desc"
-                        }
+                        },
+                        "min_doc_count": 0
                     },
                     "aggs": {
                         "1": {
@@ -69,7 +71,8 @@ players_query = {
         "2": {
             "date_histogram": {
                 "field": "date",
-                "interval": "1d"
+                "interval": "1d",
+                "min_doc_count": 0
             },
             "aggs": {
                 "3": {
@@ -78,7 +81,8 @@ players_query = {
                         "size": 2,
                         "order": {
                             "_count": "desc"
-                        }
+                        },
+                        "min_doc_count": 0
                     }
                 }
             }
@@ -172,7 +176,8 @@ new_players_query = {
         "2": {
             "date_histogram": {
                 "field": "created_at",
-                "interval": "1d"
+                "interval": "1d",
+                "min_doc_count": 0
             },
             "aggs": {
                 "3": {
@@ -181,7 +186,8 @@ new_players_query = {
                         "size": 2,
                         "order": {
                             "_count": "desc"
-                        }
+                        },
+                        "min_doc_count": 0
                     }
                 }
             }
