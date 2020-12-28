@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 from collections import OrderedDict
 from datetime import datetime, timedelta
-from elasticsearch import Elasticsearch
+from elasticsearch6 import Elasticsearch
 from json import dump, load
 from math import pi, sin, cos
 from matplotlib import pyplot as plt
