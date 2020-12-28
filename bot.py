@@ -480,6 +480,10 @@ def calc_label(value):
         return '{} year{}'.format(value // 365, '' if value // 365 == 1 else 's')
 
 
+def calc_angle(wedge):
+    return (wedge.theta2 - wedge.theta1) / 2 + wedge.theta1
+
+
 def create_account_age_chart(buckets):
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
@@ -512,7 +516,7 @@ def create_account_age_chart(buckets):
     bbox_props = dict(boxstyle='square,pad=0.3', fc='w', ec='k', lw=0.72)
     kw = dict(arrowprops=dict(arrowstyle='-'), bbox=bbox_props, zorder=0, va='center')
     for i, wedge in enumerate(outer_wedges):
-        angle = (wedge.theta2 - wedge.theta1) / 2 + wedge.theta1
+        angle = calc_angle(wedge)
         y = sin(angle * (pi / 180))
         x = cos(angle * (pi / 180))
         align = 'right' if x < 0 else 'left'
@@ -546,10 +550,20 @@ def create_account_age_chart(buckets):
     # Replace inner text with actual values
     for i, label, wedge, text in zip(range(len(inner_wedges)), inner_labels, inner_wedges, inner_autotext):
         text.set_text(buckets[label]['other' if i // 2 > len(buckets['all'].keys()) - 1 else list(buckets['all'].keys())[i // 2]])
-        angle = (wedge.theta2 - wedge.theta1) / 2 + wedge.theta1
+        angle = calc_angle(wedge)
         if 90 < angle < 270:
             angle += 180
         text.set_rotation(angle)
+
+    # Patch inner wedges to group together in explosion
+    # Influenced by: https://stackoverflow.com/a/20556088/1993468
+    groups = [[i, i+1] for i in range(0, len(inner_wedges), 2)]
+    radfraction = 0.1
+    for group in groups:
+        angle = ((inner_wedges[group[-1]].theta2 + inner_wedges[group[0]].theta1)/2) * (pi / 180)
+        for g in group:
+            wedge = inner_wedges[g]
+            wedge.set_center((radfraction * wedge.r * cos(angle), radfraction * wedge.r * sin(angle)))
 
     ax.legend(inner_wedges[-2:], ['xbox', 'ps'], loc='lower right')
     plt.text(0.5, 0.5, '@WOTC_Tracker', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
