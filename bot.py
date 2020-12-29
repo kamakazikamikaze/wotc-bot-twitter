@@ -434,7 +434,7 @@ def query_es_for_chart(config):
     response = es.search(index='total_battles-*', body=personal_players_query, scroll='30s')
     while len(response['hits']['hits']):
         hits.extend(response['hits']['hits'])
-        response = es.scroll(response['_scroll_id'], scroll='3s')
+        response = es.scroll(scroll_id=response['_scroll_id'], scroll='3s')
 
     flattened = [doc['_source']['account_id'] for doc in hits]
 
