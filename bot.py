@@ -504,12 +504,14 @@ def create_account_age_chart(buckets):
     # Outer pie chart
     outer_cmap = plt.get_cmap("binary")
     outer_colors = outer_cmap([i * 10 for i in range(10, len(buckets['all'].keys()) + 11)])
-    outer_wedges, outer_text = ax.pie(
+    outer_wedges, outer_text, outer_autotext = ax.pie(
         buckets['all'].values(),
         explode=[0.1 for __ in outer_labels],
         radius=1,
         colors=outer_colors,
-        wedgeprops=dict(width=size, edgecolor='w')
+        wedgeprops=dict(width=size, edgecolor='w'),
+        autopct='%1.1f%%',
+        pctdistance=1.1
         #labels=outer_labels
     )
 
