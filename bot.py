@@ -488,8 +488,8 @@ def create_account_age_chart(buckets):
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
     plt.suptitle("Breakdown of yesterday's active accounts by account age")
-    ax = plt.axes()
-    ax.axis('equal')
+    ax1 = plt.subplot2grid((11, 1), (0, 0), rowspan=10)
+    ax1.axis('equal')
     size = 0.125
 
     outer_labels = []
@@ -504,7 +504,7 @@ def create_account_age_chart(buckets):
     # Outer pie chart
     outer_cmap = plt.get_cmap("binary")
     outer_colors = outer_cmap([i * 10 for i in range(10, len(buckets['all'].keys()) + 11)])
-    outer_wedges, outer_text, outer_autotext = ax.pie(
+    outer_wedges, outer_text, outer_autotext = ax1.pie(
         buckets['all'].values(),
         explode=[0.1 for __ in outer_labels],
         radius=1,
@@ -524,7 +524,7 @@ def create_account_age_chart(buckets):
         align = 'right' if x < 0 else 'left'
         connectionstyle = 'angle,angleA=0,angleB={}'.format(angle)
         kw['arrowprops'].update({'connectionstyle': connectionstyle})
-        ax.annotate(
+        ax1.annotate(
             outer_labels[i],
             xy=(x, y),
             xytext=(1.35*(-1 if x < 0 else 1), 1.4*y),
@@ -539,7 +539,7 @@ def create_account_age_chart(buckets):
     for pair in pie_flat:
         inner_labels.extend(['xbox', 'ps'])
     inner_colors = inner_cmap([1 if console == 'ps' else 9 for console in inner_labels])
-    inner_wedges, inner_text, inner_autotext = ax.pie(
+    inner_wedges, inner_text, inner_autotext = ax1.pie(
         [item for sublist in pie_flat for item in sublist],
         explode=[0.1 for __ in inner_labels],
         radius=1.05-size,
@@ -567,8 +567,27 @@ def create_account_age_chart(buckets):
             wedge = inner_wedges[g]
             wedge.set_center((radfraction * wedge.r * cos(angle), radfraction * wedge.r * sin(angle)))
 
-    ax.legend(inner_wedges[-2:], ['xbox', 'ps'], loc='lower right')
-    plt.text(0.5, 0.5, '@WOTC_Tracker', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+    # Add subplot in second row, below nested pie chart
+    ax2 = plt.subplot2grid((11, 1), (10, 0))
+    ax2.axhline(color='black', y=0)
+    # Xbox, Playstation
+    totals = [sum(buckets['xbox'].values()), sum(buckets['ps'].values()), sum(buckets['all'].values())]
+    ypos = -0.18
+    bottom = 0
+    height = 0.1
+    for i in range(len(totals) - 1):
+        width = totals[i] / totals[-1]
+        ax2.barh(ypos, width, height, left=bottom, color=inner_colors[i])
+        xpos = bottom + ax2.patches[i].get_width() / 2
+        bottom += width
+        ax2.text(xpos, ypos, '{} ({:.1f}%)'.format(totals[i], (totals[i] / totals[-1]) * 100), ha='center', va='center')
+
+    ax2.axis('off')
+    ax2.set_title('Total Active Players', y=0.325)
+    ax2.set_xlim(0, 1)
+
+    ax1.legend(inner_wedges[-2:], ['xbox', 'ps'], loc='lower right')
+    plt.text(0.5, 0.5, '@WOTC_Tracker', horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
     plt.savefig(ACCOUNTAGE_PNG)
     del fig
 
