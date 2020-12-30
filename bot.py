@@ -8,6 +8,7 @@ from matplotlib import pyplot as plt
 from tweepy import OAuthHandler, API
 
 
+# Multi-day, use gte
 battles_query = {
     "aggs": {
         "2": {
@@ -69,6 +70,7 @@ battles_query = {
     }
 }
 
+# Multi-day, use gte
 players_query = {
     "aggs": {
         "2": {
@@ -122,6 +124,7 @@ players_query = {
         }
     }
 }
+
 
 unique_count_query = {
     "aggs": {
@@ -266,11 +269,58 @@ personal_players_query = {
     'size': 500
 }
 
+accounts_per_battles_range_query = {
+    'aggs': {
+        '2': {
+            'range': {
+                'field': 'battles',
+                'ranges': [
+                    {'from': 1, 'to': 5},
+                    {'from': 5, 'to': 10},
+                    {'from': 10, 'to': 20},
+                    {'from': 20, 'to': 30},
+                    {'from': 30, 'to': 40},
+                    {'from': 40, 'to': 50},
+                    {'from': 50}
+                ],
+                'keyed': True
+            },
+            'aggs': {
+                '3': {
+                    'terms': {
+                        'field': 'console.keyword',
+                        'size': 2,
+                        'order': {'_count': 'desc'}
+                    }
+                }
+            }
+        }
+    },
+    'size': 0,
+    '_source': {'excludes': []},
+    'stored_fields': ['*'],
+    'script_fields': {},
+    'docvalue_fields': [{'field': 'date', 'format': 'date_time'}],
+    'query': {
+        'bool': {
+            'must': [
+                {'match_all': {}},
+                {'match_all': {}},
+                {'range': {'date': {'gt': None, 'lte': None, 'format': 'date'}}}
+            ],
+            'filter': [],
+            'should': [],
+            'must_not': []
+        }
+    }
+}
+
 
 BATTLES_PNG = '/tmp/battles.png'
 PLAYERS_PNG = '/tmp/players.png'
 NEWPLAYERS_PNG = '/tmp/newplayers.png'
 ACCOUNTAGE_PNG = '/tmp/accountage.png'
+BATTLERANGE_PNG = '/tmp/battlerange.png'
 
 def manage_config(mode, filename='config.json'):
     if mode == 'read':
@@ -293,7 +343,16 @@ def manage_config(mode, filename='config.json'):
                     },
                     'es index': 'diff_battles-*',
                     'unique': [7, 14, 30],
-                    'account age': [7, 30, 90, 180, 365, 730, 1095, 1460, 1825]
+                    'account age': [7, 30, 90, 180, 365, 730, 1095, 1460, 1825],
+                    'battle ranges': [
+                        {"from": 1, "to": 5},
+                        {"from": 5, "to": 10},
+                        {"from": 10, "to": 20},
+                        {"from": 20, "to": 30},
+                        {"from": 30, "to": 40},
+                        {"from": 40, "to": 50},
+                        {"from": 50}
+                    ]
                 }
             )
 
@@ -422,7 +481,7 @@ def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, player
     del fig
 
 
-def query_es_for_chart(config):
+def query_es_for_active_accounts(config):
     now = datetime.utcnow()
     then = now - timedelta(days=1)
     es = Elasticsearch(**config['elasticsearch'])
@@ -431,7 +490,7 @@ def query_es_for_chart(config):
 
     # Get all account IDs of active players
     hits = []
-    response = es.search(index='total_battles-*', body=personal_players_query, scroll='30s')
+    response = es.search(index=config['es index'], body=personal_players_query, scroll='30s')
     while len(response['hits']['hits']):
         hits.extend(response['hits']['hits'])
         response = es.scroll(scroll_id=response['_scroll_id'], scroll='3s')
@@ -487,7 +546,8 @@ def calc_angle(wedge):
 def create_account_age_chart(buckets):
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
-    plt.suptitle("Breakdown of yesterday's active accounts by account age")
+    then = datetime.utcnow() - timedelta(days=1)
+    plt.suptitle("Breakdown of active accounts by account age for {}".format(then.strftime('%Y-%m-%d')))
     ax1 = plt.subplot2grid((11, 1), (0, 0), rowspan=10)
     ax1.axis('equal')
     size = 0.125
@@ -592,6 +652,115 @@ def create_account_age_chart(buckets):
     del fig
 
 
+def query_es_for_accounts_by_battles(config):
+    now = datetime.utcnow()
+    then = now - timedelta(days=1)
+    es = Elasticsearch(**config['elasticsearch'])
+    accounts_per_battles_range_query['query']['bool']['must'][-1]['range']['date']['gt'] = then.strftime('%Y-%m-%d')
+    accounts_per_battles_range_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    if 'battle ranges' in config:
+        accounts_per_battles_range_query['aggs']['2']['range']['ranges'] = config['battle ranges']
+
+    response = es.search(index=config['es index'], body=accounts_per_battles_range_query)
+    buckets = {
+        "xbox": OrderedDict((v, 0) for v in response['aggregations']['2']['buckets'].keys()),
+        "ps": OrderedDict((v, 0) for v in response['aggregations']['2']['buckets'].keys()),
+        "all": OrderedDict((v, 0) for v in response['aggregations']['2']['buckets'].keys()),
+    }
+    for key, value in response['aggregations']['2']['buckets'].items():
+        buckets['all'][key] = value['doc_count']
+        for bucket in value['3']['buckets']:
+            buckets[bucket['key']][key] = bucket['doc_count']
+    return buckets
+
+
+def create_accounts_by_battles_chart(buckets):
+    plt.clf()
+    fig = plt.figure(figsize=(11, 8), dpi=150)
+    then = datetime.utcnow() - timedelta(days=1)
+    plt.suptitle("Breakdown of accounts by number of battles played for {}".format(then.strftime('%Y-%m-%d')))
+    # ax1 = plt.subplot2grid((11, 1), (0, 0), rowspan=10)
+    ax1 = plt.axes()
+    ax1.axis('equal')
+    size = 0.125
+
+    outer_labels = []
+    prev = 0
+    for key in buckets['all'].keys():
+        outer_labels.append(key + ' battles')
+
+    # Outer pie chart
+    outer_cmap = plt.get_cmap("binary")
+    outer_colors = outer_cmap([i * 10 for i in range(10, len(buckets['all'].keys()) + 11)])
+    outer_wedges, outer_text, outer_autotext = ax1.pie(
+        buckets['all'].values(),
+        explode=[0.1 for __ in outer_labels],
+        radius=1,
+        colors=outer_colors,
+        wedgeprops=dict(width=size, edgecolor='w'),
+        autopct='%1.1f%%',
+        pctdistance=1.1
+        #labels=outer_labels
+    )
+
+    bbox_props = dict(boxstyle='square,pad=0.3', fc='w', ec='k', lw=0.72)
+    kw = dict(arrowprops=dict(arrowstyle='-'), bbox=bbox_props, zorder=0, va='center')
+    for i, wedge in enumerate(outer_wedges):
+        angle = calc_angle(wedge)
+        y = sin(angle * (pi / 180))
+        x = cos(angle * (pi / 180))
+        align = 'right' if x < 0 else 'left'
+        connectionstyle = 'angle,angleA=0,angleB={}'.format(angle)
+        kw['arrowprops'].update({'connectionstyle': connectionstyle})
+        ax1.annotate(
+            outer_labels[i],
+            xy=(x, y),
+            xytext=(1.35*(-1 if x < 0 else 1), 1.4*y),
+            horizontalalignment=align,
+            **kw
+        )
+
+    # Inner pie chart
+    inner_cmap = plt.get_cmap("tab20c")
+    pie_flat = list(zip(buckets['xbox'].values(), buckets['ps'].values()))
+    inner_labels = []
+    for pair in pie_flat:
+        inner_labels.extend(['xbox', 'ps'])
+    inner_colors = inner_cmap([1 if console == 'ps' else 9 for console in inner_labels])
+    inner_wedges, inner_text, inner_autotext = ax1.pie(
+        [item for sublist in pie_flat for item in sublist],
+        explode=[0.1 for __ in inner_labels],
+        radius=1.05-size,
+        colors=inner_colors,
+        wedgeprops=dict(width=size, edgecolor='w'),
+        autopct='',
+        pctdistance=0.9
+    )
+
+    # Replace inner text with actual values
+    for i, label, wedge, text in zip(range(len(inner_wedges)), inner_labels, inner_wedges, inner_autotext):
+        text.set_text(buckets[label]['other' if i // 2 > len(buckets['all'].keys()) - 1 else list(buckets['all'].keys())[i // 2]])
+        angle = calc_angle(wedge)
+        if 90 < angle < 270:
+            angle += 180
+        text.set_rotation(angle)
+
+    # Patch inner wedges to group together in explosion
+    # Influenced by: https://stackoverflow.com/a/20556088/1993468
+    groups = [[i, i+1] for i in range(0, len(inner_wedges), 2)]
+    radfraction = 0.1
+    for group in groups:
+        angle = ((inner_wedges[group[-1]].theta2 + inner_wedges[group[0]].theta1)/2) * (pi / 180)
+        for g in group:
+            wedge = inner_wedges[g]
+            wedge.set_center((radfraction * wedge.r * cos(angle), radfraction * wedge.r * sin(angle)))
+
+    ax1.legend(inner_wedges[-2:], ['xbox', 'ps'], loc='lower right')
+    plt.text(0.5, 0.5, '@WOTC_Tracker', horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    plt.savefig(BATTLERANGE_PNG)
+    del fig
+
+
 def upload_activity_graphs_to_twitter(config):
     auth = OAuthHandler(
         config['twitter']['api key'],
@@ -624,6 +793,21 @@ def upload_account_age_graph_to_twitter(config):
     )
 
 
+def upload_accounts_by_battles_chart_to_twitter(config):
+    auth = OAuthHandler(
+        config['twitter']['api key'],
+        config['twitter']['api secret key'])
+    auth.set_access_token(
+        config['twitter']['access token'],
+        config['twitter']['access token secret'])
+    api = API(auth)
+    battlerange = api.media_upload(BATTLERANGE_PNG)
+    api.update_status(
+        status='Breakdown of accounts by number of battles played on #worldoftanksconsole',
+        media_ids=[battlerange.media_id]
+    )
+
+
 def share_unique_with_twitter(config, unique):
     auth = OAuthHandler(
         config['twitter']['api key'],
@@ -651,6 +835,8 @@ if __name__ == '__main__':
     config = manage_config('read', args.config)
     create_activity_graphs(*query_es_for_graphs(config))
     upload_activity_graphs_to_twitter(config)
-    create_account_age_chart(query_es_for_chart(config))
+    create_account_age_chart(query_es_for_active_accounts(config))
     upload_account_age_graph_to_twitter(config)
+    create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config))
+    upload_accounts_by_battles_chart_to_twitter(config)
     share_unique_with_twitter(config, query_es_for_unique(config))
