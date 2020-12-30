@@ -687,7 +687,8 @@ def create_accounts_by_battles_chart(buckets):
     outer_labels = []
     prev = 0
     for key in buckets['all'].keys():
-        outer_labels.append(key + ' battles')
+        parts = key.split('-')
+        outer_labels.append('{}-{} battles'.format(int(float(parts[0])) if parts[0] != '*' else parts[0], int(float(parts[1])) - 1 if parts[1] != '*' else parts[1]))
 
     # Outer pie chart
     outer_cmap = plt.get_cmap("binary")
