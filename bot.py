@@ -5,6 +5,7 @@ from elasticsearch6 import Elasticsearch
 from json import dump, load
 from math import pi, sin, cos
 from matplotlib import pyplot as plt
+from matplotlib.dates import DateFormatter
 from tweepy import OAuthHandler, API
 
 
@@ -239,7 +240,6 @@ personal_players_query = {
             'date_histogram': {
                 'field': 'date',
                 'interval': '1d',
-                'time_zone': 'America/Chicago',
                 'min_doc_count': 0
             }
         }
@@ -315,12 +315,68 @@ accounts_per_battles_range_query = {
     }
 }
 
+five_battles_a_day_query = {
+    'aggs': {
+        '4': {
+            'date_histogram': {
+                'field': 'date',
+                'interval': '1d',
+                'min_doc_count': 0
+            },
+            'aggs': {
+                '3': {
+                    'terms': {
+                        'field': 'console.keyword',
+                        'size': 2,
+                        'order': {'_count': 'desc'}
+                    },
+                    'aggs': {
+                        '2': {
+                            'range': {
+                                'field': 'battles',
+                                'ranges': [{'from': 5, 'to': None}],
+                                'keyed': True
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    'size': 0,
+    '_source': {'excludes': []},
+    'stored_fields': ['*'],
+    'script_fields': {},
+    'docvalue_fields': [{'field': 'date', 'format': 'date_time'}],
+    'query': {
+        'bool': {
+            'must': [
+                {'match_all': {}},
+                {'match_all': {}},
+                {
+                    'range': {
+                        'date': {
+                            'gte': None,
+                            'lte': None,
+                            'format': 'date'
+                        }
+                    }
+                }
+            ],
+            'filter': [],
+            'should': [],
+            'must_not': []
+        }
+    }
+}
+
 
 BATTLES_PNG = '/tmp/battles.png'
 PLAYERS_PNG = '/tmp/players.png'
 NEWPLAYERS_PNG = '/tmp/newplayers.png'
 ACCOUNTAGE_PNG = '/tmp/accountage.png'
 BATTLERANGE_PNG = '/tmp/battlerange.png'
+FIVEADAY_PNG = '/tmp/fiveaday.png'
 
 def manage_config(mode, filename='config.json'):
     if mode == 'read':
@@ -762,6 +818,56 @@ def create_accounts_by_battles_chart(buckets):
     del fig
 
 
+def query_five_battles_a_day_minimum(config):
+    now = datetime.utcnow()
+    then = now - timedelta(days=config['days'])
+    es = Elasticsearch(**config['elasticsearch'])
+    five_battles_a_day_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    five_battles_a_day_query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
+    response = es.search(index=config['es index'], body=five_battles_a_day_query)
+
+    buckets = {
+        "xbox": OrderedDict(),
+        "ps": OrderedDict(),
+        "all": OrderedDict()
+    }
+
+    for bucket in response['aggregations']['4']['buckets']:
+        key = bucket['key_as_string'].split('T')[0]
+        for subbucket in bucket['3']['buckets']:
+            buckets[subbucket['key']][key] = subbucket['2']['buckets']['5.0-*']['doc_count']
+        buckets['all'][key] = buckets['xbox'][key] + buckets['ps'][key]
+
+    return buckets
+
+
+# Requested by Khorne Dog in the forums
+def create_five_battles_minimum_chart(buckets):
+    plt.clf()
+    fig = plt.figure(figsize=(11, 8), dpi=150)
+    fig.suptitle("Number of accounts having played at least 5 battles")
+    ax1 = fig.add_subplot(111)
+
+    width = 0.25
+    keys = [datetime.strptime(d, '%Y-%m-%d') for d in buckets['all'].keys()]
+    xkeys = [d - timedelta(hours=3) for d in keys]
+    pkeys = [d + timedelta(hours=3) for d in keys]
+    xbox_bars = ax1.bar(xkeys, buckets['xbox'].values(), width=width, color='g')
+    ps_bars = ax1.bar(pkeys, buckets['ps'].values(), width=width, color='b')
+    ax1.table(
+        cellText=[
+            list(buckets['xbox'].values()),
+            list(buckets['ps'].values()),
+            list(buckets['all'].values())],
+        rowLabels=['xbox', 'ps', 'all'],
+        colLabels=list(buckets['all'].keys()),
+        loc='bottom')
+    ax1.set_ylabel('Accounts')
+    ax1.set_xticks([])
+    ax1.legend((xbox_bars[0], ps_bars[0]), ('xbox', 'ps'))
+    fig.savefig(FIVEADAY_PNG)
+
+
 def upload_activity_graphs_to_twitter(config):
     auth = OAuthHandler(
         config['twitter']['api key'],
@@ -809,6 +915,21 @@ def upload_accounts_by_battles_chart_to_twitter(config):
     )
 
 
+def upload_five_battles_minimum_chart_to_twitter(config):
+    auth = OAuthHandler(
+        config['twitter']['api key'],
+        config['twitter']['api secret key'])
+    auth.set_access_token(
+        config['twitter']['access token'],
+        config['twitter']['access token secret'])
+    api = API(auth)
+    fiveaday = api.media_upload(FIVEADAY_PNG)
+    api.update_status(
+        status='Filtering accounts per day with 5 battles minimum on #worldoftanksconsole',
+        media_ids=[fiveaday.media_id]
+    )
+
+
 def share_unique_with_twitter(config, unique):
     auth = OAuthHandler(
         config['twitter']['api key'],
@@ -840,4 +961,6 @@ if __name__ == '__main__':
     upload_account_age_graph_to_twitter(config)
     create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config))
     upload_accounts_by_battles_chart_to_twitter(config)
+    create_five_battles_minimum_chart(query_five_battles_a_day_minimum(config))
+    upload_five_battles_minimum_chart_to_twitter(config)
     share_unique_with_twitter(config, query_es_for_unique(config))
