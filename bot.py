@@ -5,7 +5,6 @@ from elasticsearch6 import Elasticsearch
 from json import dump, load
 from math import pi, sin, cos
 from matplotlib import pyplot as plt
-from matplotlib.dates import DateFormatter
 from tweepy import OAuthHandler, API
 
 
@@ -408,7 +407,8 @@ def manage_config(mode, filename='config.json'):
                         {"from": 30, "to": 40},
                         {"from": 40, "to": 50},
                         {"from": 50}
-                    ]
+                    ],
+                    'watermark text': '@WOTC_Tracker'
                 }
             )
 
@@ -495,45 +495,54 @@ def query_es_for_unique(config):
     return unique
 
 
-def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps):
+def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps, watermark_text='@WOTC_Tracker'):
     # Players PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
-    plt.suptitle('Active Players Per Platform')
-    plt.xticks(rotation=45, ha='right')
-    ax = plt.axes()
-    ax.ticklabel_format(useOffset=False, style='plain')
-    plt.plot(dates, players_xbox, color='green', linewidth=2, label='Xbox')
-    plt.plot(dates, players_ps, color='blue', linewidth=2, label='Playstation')
-    plt.grid()
-    plt.legend()
-    plt.savefig(PLAYERS_PNG)
+    fig.suptitle('Active Players Per Platform')
+    # ax1 = plt.axes()
+    ax1 = fig.add_subplot(111)
+    ax1.tick_params(axis='x', labelrotation=45)
+    ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.set_xticklabels(dates, ha='right')
+    ax1.plot(dates, players_xbox, color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, players_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.grid()
+    ax1.legend()
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.savefig(PLAYERS_PNG)
     del fig
     # Battles PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
-    plt.suptitle('Total Battles Per Platform')
-    plt.xticks(rotation=45, ha='right')
-    ax = plt.axes()
-    ax.ticklabel_format(useOffset=False, style='plain')
-    plt.plot(dates, battles_xbox, color='green', linewidth=2, label='Xbox')
-    plt.plot(dates, battles_ps, color='blue', linewidth=2, label='Playstation')
-    plt.grid()
-    plt.legend()
-    plt.savefig(BATTLES_PNG)
+    fig.suptitle('Total Battles Per Platform')
+    # ax = plt.axes()
+    ax1 = fig.add_subplot(111)
+    ax1.tick_params(axis='x', labelrotation=45)
+    ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.set_xticklabels(dates, ha='right')
+    ax1.plot(dates, battles_xbox, color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, battles_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.grid()
+    ax1.legend()
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.savefig(BATTLES_PNG)
     del fig
     # New Players PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
-    plt.suptitle('New Players Per Platform')
-    plt.xticks(rotation=45, ha='right')
-    ax = plt.axes()
-    ax.ticklabel_format(useOffset=False, style='plain')
-    plt.plot(newplayers_dates, newplayers_xbox, color='green', linewidth=2, label='Xbox')
-    plt.plot(newplayers_dates, newplayers_ps, color='blue', linewidth=2, label='Playstation')
-    plt.grid()
-    plt.legend()
-    plt.savefig(NEWPLAYERS_PNG)
+    fig.suptitle('New Players Per Platform')
+    # ax = plt.axes()
+    ax1 = fig.add_subplot(111)
+    ax1.tick_params(axis='x', labelrotation=45)
+    ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.set_xticklabels(dates, ha='right')
+    ax1.plot(newplayers_dates, newplayers_xbox, color='green', linewidth=2, label='Xbox')
+    ax1.plot(newplayers_dates, newplayers_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.grid()
+    ax1.legend()
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.savefig(NEWPLAYERS_PNG)
     del fig
 
 
@@ -599,11 +608,11 @@ def calc_angle(wedge):
     return (wedge.theta2 - wedge.theta1) / 2 + wedge.theta1
 
 
-def create_account_age_chart(buckets):
+def create_account_age_chart(buckets, watermark_text='@WOTC_Tracker'):
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
     then = datetime.utcnow() - timedelta(days=1)
-    plt.suptitle("Breakdown of active accounts by account age for {}".format(then.strftime('%Y-%m-%d')))
+    fig.suptitle("Breakdown of active accounts by account age for {}".format(then.strftime('%Y-%m-%d')))
     ax1 = plt.subplot2grid((11, 1), (0, 0), rowspan=10)
     ax1.axis('equal')
     size = 0.125
@@ -703,8 +712,8 @@ def create_account_age_chart(buckets):
     ax2.set_xlim(0, 1)
 
     ax1.legend(inner_wedges[-2:], ['xbox', 'ps'], loc='lower right')
-    plt.text(0.5, 0.5, '@WOTC_Tracker', horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
-    plt.savefig(ACCOUNTAGE_PNG)
+    fig.text(0.5, 0.5, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.savefig(ACCOUNTAGE_PNG)
     del fig
 
 
@@ -730,11 +739,11 @@ def query_es_for_accounts_by_battles(config):
     return buckets
 
 
-def create_accounts_by_battles_chart(buckets):
+def create_accounts_by_battles_chart(buckets, watermark_text='@WOTC_Tracker'):
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
     then = datetime.utcnow() - timedelta(days=1)
-    plt.suptitle("Breakdown of accounts by number of battles played for {}".format(then.strftime('%Y-%m-%d')))
+    fig.suptitle("Breakdown of accounts by number of battles played for {}".format(then.strftime('%Y-%m-%d')))
     # ax1 = plt.subplot2grid((11, 1), (0, 0), rowspan=10)
     ax1 = plt.axes()
     ax1.axis('equal')
@@ -813,8 +822,8 @@ def create_accounts_by_battles_chart(buckets):
             wedge.set_center((radfraction * wedge.r * cos(angle), radfraction * wedge.r * sin(angle)))
 
     ax1.legend(inner_wedges[-2:], ['xbox', 'ps'], loc='lower right')
-    plt.text(0.5, 0.5, '@WOTC_Tracker', horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
-    plt.savefig(BATTLERANGE_PNG)
+    fig.text(0.5, 0.5, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.savefig(BATTLERANGE_PNG)
     del fig
 
 
@@ -842,7 +851,7 @@ def query_five_battles_a_day_minimum(config):
 
 
 # Requested by Khorne Dog in the forums
-def create_five_battles_minimum_chart(buckets):
+def create_five_battles_minimum_chart(buckets, watermark_text='@WOTC_Tracker'):
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
     fig.suptitle("Number of accounts having played at least 5 battles")
@@ -865,6 +874,7 @@ def create_five_battles_minimum_chart(buckets):
     ax1.set_ylabel('Accounts')
     ax1.set_xticks([])
     ax1.legend((xbox_bars[0], ps_bars[0]), ('xbox', 'ps'))
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
     fig.savefig(FIVEADAY_PNG)
 
 
@@ -949,18 +959,28 @@ def share_unique_with_twitter(config, unique):
             )
         )
 
+
+def get_universal_params(config):
+    params = dict()
+    watermark = config.get('watermark text', None)
+    if watermark:
+        params['watermark_text'] = watermark
+    return params
+
+
 if __name__ == '__main__':
     agp = ArgumentParser(
         description='Bot for processing tracker data and uploading to Twitter')
     agp.add_argument('config', help='Config file location')
     args = agp.parse_args()
     config = manage_config('read', args.config)
-    create_activity_graphs(*query_es_for_graphs(config))
+    additional_params = get_universal_params(config)
+    create_activity_graphs(*query_es_for_graphs(config), **additional_params)
     upload_activity_graphs_to_twitter(config)
-    create_account_age_chart(query_es_for_active_accounts(config))
+    create_account_age_chart(query_es_for_active_accounts(config), **additional_params)
     upload_account_age_graph_to_twitter(config)
-    create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config))
+    create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config), **additional_params)
     upload_accounts_by_battles_chart_to_twitter(config)
-    create_five_battles_minimum_chart(query_five_battles_a_day_minimum(config))
+    create_five_battles_minimum_chart(query_five_battles_a_day_minimum(config), **additional_params)
     upload_five_battles_minimum_chart_to_twitter(config)
     share_unique_with_twitter(config, query_es_for_unique(config))
