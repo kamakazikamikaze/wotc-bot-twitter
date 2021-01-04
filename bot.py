@@ -125,7 +125,6 @@ players_query = {
     }
 }
 
-
 unique_count_query = {
     "aggs": {
         "2": {
@@ -369,13 +368,13 @@ five_battles_a_day_query = {
     }
 }
 
-
 BATTLES_PNG = '/tmp/battles.png'
 PLAYERS_PNG = '/tmp/players.png'
 NEWPLAYERS_PNG = '/tmp/newplayers.png'
 ACCOUNTAGE_PNG = '/tmp/accountage.png'
 BATTLERANGE_PNG = '/tmp/battlerange.png'
 FIVEADAY_PNG = '/tmp/fiveaday.png'
+PLAYERSLONG_PNG = '/tmp/playerslong.png'
 
 def manage_config(mode, filename='config.json'):
     if mode == 'read':
@@ -386,6 +385,8 @@ def manage_config(mode, filename='config.json'):
             dump(
                 {
                     'days': 14,
+                    'long term': 90,
+                    'omit errors long term': True,
                     'twitter': {
                         'api key': '',
                         'api secret key': '',
@@ -843,6 +844,9 @@ def query_five_battles_a_day_minimum(config):
 
     for bucket in response['aggregations']['4']['buckets']:
         key = bucket['key_as_string'].split('T')[0]
+        buckets['xbox'][key] = 0
+        buckets['ps'][key] = 0
+        buckets['all'][key] = 0
         for subbucket in bucket['3']['buckets']:
             buckets[subbucket['key']][key] = subbucket['2']['buckets']['5.0-*']['doc_count']
         buckets['all'][key] = buckets['xbox'][key] + buckets['ps'][key]
@@ -876,6 +880,97 @@ def create_five_battles_minimum_chart(buckets, watermark_text='@WOTC_Tracker'):
     ax1.legend((xbox_bars[0], ps_bars[0]), ('xbox', 'ps'))
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
     fig.savefig(FIVEADAY_PNG)
+
+
+def query_long_term_data(config, filter_server_failures=True):
+    now = datetime.utcnow()
+    then = now - timedelta(days=config.get('long term', 90) + 1)
+    es = Elasticsearch(**config['elasticsearch'])
+    # Setup queries
+    battles_query['query']['bool'][
+        'must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
+    battles_query['query']['bool'][
+        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    players_query['query']['bool'][
+        'must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
+    players_query['query']['bool'][
+        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+
+    players = es.search(index=config['es index'], body=players_query)
+
+    buckets = {
+        "xbox": OrderedDict(),
+        "ps": OrderedDict(),
+        "all": OrderedDict()
+    }
+
+    for bucket in players['aggregations']['2']['buckets']:
+        key = bucket['key_as_string'].split('T')[0]
+        buckets['xbox'][key] = 0
+        buckets['ps'][key] = 0
+        buckets['all'][key] = 0
+        if not bucket['3']['buckets']:
+            continue
+        for subbucket in bucket['3']['buckets']:
+            buckets[subbucket['key']][key] = subbucket['doc_count']
+        buckets['all'][key] = buckets['xbox'][key] + buckets['ps'][key]
+
+    if filter_server_failures:
+        skip_next = False
+        for key, value in buckets['ps'].items():
+            # 20,000 is way below normal. Sometimes the server dies partway through. This day should be skipped
+            if value < 20000:
+                buckets['xbox'][key] = None
+                buckets['ps'][key] = None
+                buckets['all'][key] = None
+                skip_next = True
+            elif skip_next:
+                buckets['xbox'][key] = None
+                buckets['ps'][key] = None
+                buckets['all'][key] = None
+                skip_next = False
+
+    delkey = list(buckets['all'].keys())[0]
+    del buckets['all'][key]
+    del buckets['xbox'][key]
+    del buckets['ps'][key]
+
+    return buckets
+
+
+def create_long_term_charts(buckets, watermark_text='@WOTC_Tracker'):
+    # Players PNG
+    plt.clf()
+    fig = plt.figure(figsize=(24, 8), dpi=150)
+    fig.suptitle('Active Players Per Platform (long view)')
+    # ax1 = plt.axes()
+    ax1 = fig.add_subplot(111)
+    ax1.tick_params(axis='x', labelrotation=45)
+    ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.set_xticklabels(buckets['all'].keys(), ha='right')
+    ax1.plot(buckets['all'].keys(), buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
+    ax1.plot(buckets['all'].keys(), buckets['ps'].values(), color='blue', linewidth=2, label='Playstation')
+    ax1.grid()
+    ax1.legend()
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.tight_layout()
+    fig.savefig(PLAYERSLONG_PNG)
+    del fig
+
+
+def upload_long_term_charts(config):
+    auth = OAuthHandler(
+        config['twitter']['api key'],
+        config['twitter']['api secret key'])
+    auth.set_access_token(
+        config['twitter']['access token'],
+        config['twitter']['access token secret'])
+    api = API(auth)
+    playerslong = api.media_upload(PLAYERSLONG_PNG)
+    api.update_status(
+        status='Long-term view of active players, with downtime and multi-day catchup errors omitted',
+        media_ids=[playerslong.media_id]
+    )
 
 
 def upload_activity_graphs_to_twitter(config):
@@ -975,12 +1070,32 @@ if __name__ == '__main__':
     args = agp.parse_args()
     config = manage_config('read', args.config)
     additional_params = get_universal_params(config)
-    create_activity_graphs(*query_es_for_graphs(config), **additional_params)
-    upload_activity_graphs_to_twitter(config)
-    create_account_age_chart(query_es_for_active_accounts(config), **additional_params)
-    upload_account_age_graph_to_twitter(config)
-    create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config), **additional_params)
-    upload_accounts_by_battles_chart_to_twitter(config)
-    create_five_battles_minimum_chart(query_five_battles_a_day_minimum(config), **additional_params)
-    upload_five_battles_minimum_chart_to_twitter(config)
-    share_unique_with_twitter(config, query_es_for_unique(config))
+    try:
+        create_activity_graphs(*query_es_for_graphs(config), **additional_params)
+        upload_activity_graphs_to_twitter(config)
+    except Exception as e:
+        print(e)
+    try:
+        create_account_age_chart(query_es_for_active_accounts(config), **additional_params)
+        upload_account_age_graph_to_twitter(config)
+    except Exception as e:
+        print(e)
+    try:
+        create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config), **additional_params)
+        upload_accounts_by_battles_chart_to_twitter(config)
+    except Exception as e:
+        print(e)
+    try:
+        create_five_battles_minimum_chart(query_five_battles_a_day_minimum(config), **additional_params)
+        upload_five_battles_minimum_chart_to_twitter(config)
+    except Exception as e:
+        print(e)
+    try:
+        create_long_term_charts(query_long_term_data(config, config.get('omit errors long term', True)), **additional_params)
+        upload_long_term_charts(config)
+    except Exception as e:
+        print(e)
+    try:
+        share_unique_with_twitter(config, query_es_for_unique(config))
+    except Exception as e:
+        print(e)
