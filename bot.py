@@ -5,6 +5,7 @@ from elasticsearch6 import Elasticsearch
 from json import dump, load
 from math import pi, sin, cos
 from matplotlib import pyplot as plt
+from matplotlib import dates as mdates
 from tweepy import OAuthHandler, API
 
 
@@ -371,10 +372,13 @@ five_battles_a_day_query = {
 BATTLES_PNG = '/tmp/battles.png'
 PLAYERS_PNG = '/tmp/players.png'
 NEWPLAYERS_PNG = '/tmp/newplayers.png'
+AVERAGE_PNG = '/tmp/average.png'
 ACCOUNTAGE_PNG = '/tmp/accountage.png'
 BATTLERANGE_PNG = '/tmp/battlerange.png'
 FIVEADAY_PNG = '/tmp/fiveaday.png'
 PLAYERSLONG_PNG = '/tmp/playerslong.png'
+BATTLESLONG_PNG = '/tmp/battleslong.png'
+AVERAGELONG_PNG = '/tmp/averagelong.png'
 
 def manage_config(mode, filename='config.json'):
     if mode == 'read':
@@ -897,8 +901,21 @@ def query_long_term_data(config, filter_server_failures=True):
         'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
 
     players = es.search(index=config['es index'], body=players_query)
+    battles = es.search(index=config['es index'], body=battles_query)
 
-    buckets = {
+    players_buckets = {
+        "xbox": OrderedDict(),
+        "ps": OrderedDict(),
+        "all": OrderedDict()
+    }
+
+    battles_buckets = {
+        "xbox": OrderedDict(),
+        "ps": OrderedDict(),
+        "all": OrderedDict()
+    }
+
+    average_battles_per_day_buckets = {
         "xbox": OrderedDict(),
         "ps": OrderedDict(),
         "all": OrderedDict()
@@ -906,55 +923,124 @@ def query_long_term_data(config, filter_server_failures=True):
 
     for bucket in players['aggregations']['2']['buckets']:
         key = bucket['key_as_string'].split('T')[0]
-        buckets['xbox'][key] = 0
-        buckets['ps'][key] = 0
-        buckets['all'][key] = 0
+        players_buckets['xbox'][key] = 0
+        players_buckets['ps'][key] = 0
+        players_buckets['all'][key] = 0
         if not bucket['3']['buckets']:
             continue
         for subbucket in bucket['3']['buckets']:
-            buckets[subbucket['key']][key] = subbucket['doc_count']
-        buckets['all'][key] = buckets['xbox'][key] + buckets['ps'][key]
+            players_buckets[subbucket['key']][key] = subbucket['doc_count']
+        players_buckets['all'][key] = players_buckets['xbox'][key] + players_buckets['ps'][key]
+
+    for bucket in battles['aggregations']['2']['buckets']:
+        key = bucket['key_as_string'].split('T')[0]
+        battles_buckets['xbox'][key] = 0
+        battles_buckets['ps'][key] = 0
+        battles_buckets['all'][key] = 0
+        if not bucket['3']['buckets']:
+            continue
+        for subbucket in bucket['3']['buckets']:
+            battles_buckets[subbucket['key']][key] = subbucket['1']['value']
+        battles_buckets['all'][key] = battles_buckets['xbox'][key] + battles_buckets['ps'][key]
 
     if filter_server_failures:
         skip_next = False
-        for key, value in buckets['ps'].items():
+        for key, value in players_buckets['ps'].items():
             # 20,000 is way below normal. Sometimes the server dies partway through. This day should be skipped
             if value < 20000:
-                buckets['xbox'][key] = None
-                buckets['ps'][key] = None
-                buckets['all'][key] = None
+                players_buckets['xbox'][key] = None
+                players_buckets['ps'][key] = None
+                players_buckets['all'][key] = None
+                battles_buckets['xbox'][key] = None
+                battles_buckets['ps'][key] = None
+                battles_buckets['all'][key] = None
                 skip_next = True
             elif skip_next:
-                buckets['xbox'][key] = None
-                buckets['ps'][key] = None
-                buckets['all'][key] = None
+                players_buckets['xbox'][key] = None
+                players_buckets['ps'][key] = None
+                players_buckets['all'][key] = None
+                battles_buckets['xbox'][key] = None
+                battles_buckets['ps'][key] = None
+                battles_buckets['all'][key] = None
                 skip_next = False
 
-    delkey = list(buckets['all'].keys())[0]
-    del buckets['all'][key]
-    del buckets['xbox'][key]
-    del buckets['ps'][key]
+    for key in players_buckets['all'].keys():
+        if players_buckets['xbox'][key] is None:
+            average_battles_per_day_buckets['all'][key] = None
+            average_battles_per_day_buckets['xbox'][key] = None
+            average_battles_per_day_buckets['ps'][key] = None
+        else:
+            average_battles_per_day_buckets['xbox'][key] = battles_buckets['xbox'][key] / players_buckets['xbox'][key]
+            average_battles_per_day_buckets['ps'][key] = battles_buckets['ps'][key] / players_buckets['ps'][key]
+            average_battles_per_day_buckets['all'][key] = (battles_buckets['xbox'][key] + battles_buckets['ps'][key]) / (players_buckets['xbox'][key] + players_buckets['ps'][key])
 
-    return buckets
+    delkey = list(players_buckets['all'].keys())[0]
+    # delkey = list(battles_buckets['all'].keys())[0]
+    del players_buckets['all'][key]
+    del players_buckets['xbox'][key]
+    del players_buckets['ps'][key]
+    del battles_buckets['all'][key]
+    del battles_buckets['xbox'][key]
+    del battles_buckets['ps'][key]
+    del average_battles_per_day_buckets['xbox'][key]
+    del average_battles_per_day_buckets['ps'][key]
+    del average_battles_per_day_buckets['all'][key]
+
+    return players_buckets, battles_buckets, average_battles_per_day_buckets
 
 
-def create_long_term_charts(buckets, watermark_text='@WOTC_Tracker'):
+def create_long_term_charts(players_buckets, battles_buckets, average_battles_per_day_buckets, watermark_text='@WOTC_Tracker'):
+    dates = [datetime.strptime(d, '%Y-%m-%d') for d in players_buckets['all'].keys()]
     # Players PNG
     plt.clf()
     fig = plt.figure(figsize=(24, 8), dpi=150)
     fig.suptitle('Active Players Per Platform (long view)')
-    # ax1 = plt.axes()
     ax1 = fig.add_subplot(111)
-    ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
-    ax1.set_xticklabels(buckets['all'].keys(), ha='right')
-    ax1.plot(buckets['all'].keys(), buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
-    ax1.plot(buckets['all'].keys(), buckets['ps'].values(), color='blue', linewidth=2, label='Playstation')
+    ax1.plot(dates, players_buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, players_buckets['ps'].values(), color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticks(dates)
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
     fig.tight_layout()
+    fig.autofmt_xdate()
+    ax1.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
     fig.savefig(PLAYERSLONG_PNG)
+    del fig
+    # Battles PNG
+    plt.clf()
+    fig = plt.figure(figsize=(24, 8), dpi=150)
+    fig.suptitle('Total Battles Per Platform (long view)')
+    ax1 = fig.add_subplot(111)
+    ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.plot(dates, battles_buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, battles_buckets['ps'].values(), color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticks(dates)
+    ax1.grid()
+    ax1.legend()
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.tight_layout()
+    fig.autofmt_xdate()
+    ax1.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
+    fig.savefig(BATTLESLONG_PNG)
+    del fig
+    # Average PNG
+    plt.clf()
+    fig = plt.figure(figsize=(24, 8), dpi=150)
+    fig.suptitle('Average Battles Per Player Per Platform (long view)')
+    ax1 = fig.add_subplot(111)
+    ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.plot(dates, average_battles_per_day_buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, average_battles_per_day_buckets['ps'].values(), color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticks(dates)
+    ax1.grid()
+    ax1.legend()
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.tight_layout()
+    fig.autofmt_xdate()
+    ax1.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
+    fig.savefig(AVERAGELONG_PNG)
     del fig
 
 
@@ -967,9 +1053,11 @@ def upload_long_term_charts(config):
         config['twitter']['access token secret'])
     api = API(auth)
     playerslong = api.media_upload(PLAYERSLONG_PNG)
+    battleslong = api.media_upload(BATTLESLONG_PNG)
+    averagelong = api.media_upload(AVERAGELONG_PNG)
     api.update_status(
         status='Long-term view of active players, with downtime and multi-day catchup errors omitted',
-        media_ids=[playerslong.media_id]
+        media_ids=[playerslong.media_id, battleslong.media_id, averagelong]
     )
 
 
@@ -1091,7 +1179,7 @@ if __name__ == '__main__':
     except Exception as e:
         print(e)
     try:
-        create_long_term_charts(query_long_term_data(config, config.get('omit errors long term', True)), **additional_params)
+        create_long_term_charts(*query_long_term_data(config, config.get('omit errors long term', True)), **additional_params)
         upload_long_term_charts(config)
     except Exception as e:
         print(e)
