@@ -1057,7 +1057,7 @@ def upload_long_term_charts(config):
     averagelong = api.media_upload(AVERAGELONG_PNG)
     api.update_status(
         status='Long-term view of active players, with downtime and multi-day catchup errors omitted',
-        media_ids=[playerslong.media_id, battleslong.media_id, averagelong]
+        media_ids=[playerslong.media_id, battleslong.media_id, averagelong.media_id]
     )
 
 
