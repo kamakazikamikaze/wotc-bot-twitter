@@ -446,6 +446,8 @@ def query_es_for_graphs(config):
     players_ps = []
     newplayers_xbox = []
     newplayers_ps = []
+    averages_xbox = []
+    averages_ps = []
     for bucket in battles['aggregations']['2']['buckets']:
         if not bucket['3']['buckets']:
             battles_xbox.append(0)
@@ -475,11 +477,15 @@ def query_es_for_graphs(config):
                 newplayers_xbox.append(subbucket['doc_count'])
             else:
                 newplayers_ps.append(subbucket['doc_count'])
+    for b, p in zip(battles_xbox, players_xbox):
+        averages_xbox.append(b / p)
+    for b, p in zip(battles_ps, players_ps):
+        averages_ps.append(b / p)
     dates = [b['key_as_string'].split('T')[0] for b in players[
         'aggregations']['2']['buckets']]
     newplayers_dates = [b['key_as_string'].split('T')[0] for b in newplayers[
         'aggregations']['2']['buckets']]
-    return dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps
+    return dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps, averages_xbox, averages_ps
 
 
 def query_es_for_unique(config):
@@ -500,7 +506,7 @@ def query_es_for_unique(config):
     return unique
 
 
-def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps, watermark_text='@WOTC_Tracker'):
+def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps, averages_xbox, averages_ps, watermark_text='@WOTC_Tracker'):
     # Players PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
@@ -548,6 +554,22 @@ def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, player
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
     fig.savefig(NEWPLAYERS_PNG)
+    del fig
+    # Averages PNG
+    plt.clf()
+    fig = plt.figure(figsize=(11, 8), dpi=150)
+    fig.suptitle('Average Battles Played Per Player Per Platform')
+    # ax = plt.axes()
+    ax1 = fig.add_subplot(111)
+    ax1.tick_params(axis='x', labelrotation=45)
+    ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.set_xticklabels(dates, ha='right')
+    ax1.plot(dates, averages_xbox, color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, averages_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.grid()
+    ax1.legend()
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.savefig(AVERAGE_PNG)
     del fig
 
 
@@ -1028,7 +1050,7 @@ def create_long_term_charts(players_buckets, battles_buckets, average_battles_pe
     # Average PNG
     plt.clf()
     fig = plt.figure(figsize=(24, 8), dpi=150)
-    fig.suptitle('Average Battles Per Player Per Platform (long view)')
+    fig.suptitle('Average Battles Played Per Player Per Platform (long view)')
     ax1 = fig.add_subplot(111)
     ax1.ticklabel_format(useOffset=False, style='plain')
     ax1.plot(dates, average_battles_per_day_buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
@@ -1072,9 +1094,10 @@ def upload_activity_graphs_to_twitter(config):
     battles = api.media_upload(BATTLES_PNG)
     players = api.media_upload(PLAYERS_PNG)
     newplayers = api.media_upload(NEWPLAYERS_PNG)
+    averages = api.media_upload(AVERAGE_PNG)
     api.update_status(
         status=config['twitter']['message'],
-        media_ids=[players.media_id, battles.media_id, newplayers.media_id]
+        media_ids=[players.media_id, battles.media_id, newplayers.media_id, averages.media_id]
     )
 
 
@@ -1158,6 +1181,7 @@ if __name__ == '__main__':
     args = agp.parse_args()
     config = manage_config('read', args.config)
     additional_params = get_universal_params(config)
+    now = datetime.utcnow()
     try:
         create_activity_graphs(*query_es_for_graphs(config), **additional_params)
         upload_activity_graphs_to_twitter(config)
@@ -1178,11 +1202,13 @@ if __name__ == '__main__':
         upload_five_battles_minimum_chart_to_twitter(config)
     except Exception as e:
         print(e)
-    try:
-        create_long_term_charts(*query_long_term_data(config, config.get('omit errors long term', True)), **additional_params)
-        upload_long_term_charts(config)
-    except Exception as e:
-        print(e)
+    # Limit long-term views to beginning of month to review previous month's history
+    if now.day == 1:
+        try:
+            create_long_term_charts(*query_long_term_data(config, config.get('omit errors long term', True)), **additional_params)
+            upload_long_term_charts(config)
+        except Exception as e:
+            print(e)
     try:
         share_unique_with_twitter(config, query_es_for_unique(config))
     except Exception as e:
