@@ -507,17 +507,18 @@ def query_es_for_unique(config):
 
 
 def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps, averages_xbox, averages_ps, watermark_text='@WOTC_Tracker'):
+    shifted_dates = [(datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d') for d in dates]
     # Players PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
-    fig.suptitle('Active Players Per Platform')
+    fig.suptitle('Active Accounts Per Platform')
     # ax1 = plt.axes()
     ax1 = fig.add_subplot(111)
     ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
-    ax1.set_xticklabels(dates, ha='right')
-    ax1.plot(dates, players_xbox, color='green', linewidth=2, label='Xbox')
-    ax1.plot(dates, players_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticklabels(shifted_dates, ha='right')
+    ax1.plot(shifted_dates, players_xbox, color='green', linewidth=2, label='Xbox')
+    ax1.plot(shifted_dates, players_ps, color='blue', linewidth=2, label='Playstation')
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
@@ -531,9 +532,9 @@ def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, player
     ax1 = fig.add_subplot(111)
     ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
-    ax1.set_xticklabels(dates, ha='right')
-    ax1.plot(dates, battles_xbox, color='green', linewidth=2, label='Xbox')
-    ax1.plot(dates, battles_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticklabels(shifted_dates, ha='right')
+    ax1.plot(shifted_dates, battles_xbox, color='green', linewidth=2, label='Xbox')
+    ax1.plot(shifted_dates, battles_ps, color='blue', linewidth=2, label='Playstation')
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
@@ -542,7 +543,7 @@ def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, player
     # New Players PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
-    fig.suptitle('New Players Per Platform')
+    fig.suptitle('New Accounts Per Platform')
     # ax = plt.axes()
     ax1 = fig.add_subplot(111)
     ax1.tick_params(axis='x', labelrotation=45)
@@ -558,14 +559,14 @@ def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, player
     # Averages PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
-    fig.suptitle('Average Battles Played Per Player Per Platform')
+    fig.suptitle('Average Battles Played Per Account Per Platform')
     # ax = plt.axes()
     ax1 = fig.add_subplot(111)
     ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
-    ax1.set_xticklabels(dates, ha='right')
-    ax1.plot(dates, averages_xbox, color='green', linewidth=2, label='Xbox')
-    ax1.plot(dates, averages_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticklabels(shifted_dates, ha='right')
+    ax1.plot(shifted_dates, averages_xbox, color='green', linewidth=2, label='Xbox')
+    ax1.plot(shifted_dates, averages_ps, color='blue', linewidth=2, label='Playstation')
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
@@ -888,7 +889,7 @@ def create_five_battles_minimum_chart(buckets, watermark_text='@WOTC_Tracker'):
     ax1 = fig.add_subplot(111)
 
     width = 0.25
-    keys = [datetime.strptime(d, '%Y-%m-%d') for d in buckets['all'].keys()]
+    keys = [(datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d') for d in buckets['all'].keys()]
     xkeys = [d - timedelta(hours=3) for d in keys]
     pkeys = [d + timedelta(hours=3) for d in keys]
     xbox_bars = ax1.bar(xkeys, buckets['xbox'].values(), width=width, color='g')
@@ -899,7 +900,7 @@ def create_five_battles_minimum_chart(buckets, watermark_text='@WOTC_Tracker'):
             list(buckets['ps'].values()),
             list(buckets['all'].values())],
         rowLabels=['xbox', 'ps', 'all'],
-        colLabels=list(buckets['all'].keys()),
+        colLabels=keys,
         loc='bottom')
     ax1.set_ylabel('Accounts')
     ax1.set_xticks([])
@@ -1012,11 +1013,11 @@ def query_long_term_data(config, filter_server_failures=True):
 
 
 def create_long_term_charts(players_buckets, battles_buckets, average_battles_per_day_buckets, watermark_text='@WOTC_Tracker'):
-    dates = [datetime.strptime(d, '%Y-%m-%d') for d in players_buckets['all'].keys()]
+    dates = [datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1) for d in players_buckets['all'].keys()]
     # Players PNG
     plt.clf()
     fig = plt.figure(figsize=(24, 8), dpi=150)
-    fig.suptitle('Active Players Per Platform (long view)')
+    fig.suptitle('Active Accounts Per Platform (long view)')
     ax1 = fig.add_subplot(111)
     ax1.ticklabel_format(useOffset=False, style='plain')
     ax1.plot(dates, players_buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
@@ -1050,7 +1051,7 @@ def create_long_term_charts(players_buckets, battles_buckets, average_battles_pe
     # Average PNG
     plt.clf()
     fig = plt.figure(figsize=(24, 8), dpi=150)
-    fig.suptitle('Average Battles Played Per Player Per Platform (long view)')
+    fig.suptitle('Average Battles Played Per Account Per Platform (long view)')
     ax1 = fig.add_subplot(111)
     ax1.ticklabel_format(useOffset=False, style='plain')
     ax1.plot(dates, average_battles_per_day_buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
@@ -1078,7 +1079,7 @@ def upload_long_term_charts(config):
     battleslong = api.media_upload(BATTLESLONG_PNG)
     averagelong = api.media_upload(AVERAGELONG_PNG)
     api.update_status(
-        status='Long-term view of active players, with downtime and multi-day catchup errors omitted',
+        status='Long-term view of active accounts, with downtime and multi-day catchup errors omitted',
         media_ids=[playerslong.media_id, battleslong.media_id, averagelong.media_id]
     )
 
@@ -1154,7 +1155,7 @@ def share_unique_with_twitter(config, unique):
         config['twitter']['access token'],
         config['twitter']['access token secret'])
     api = API(auth)
-    status = 'Unique Player Count For {} Over Time\n{}'
+    status = 'Unique Active Accounts For {} Over Time\n{}'
     formatting = '{} days: {}'
     for key, values in unique.items():
         api.update_status(
