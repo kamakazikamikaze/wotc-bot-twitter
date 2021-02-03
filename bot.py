@@ -889,7 +889,7 @@ def create_five_battles_minimum_chart(buckets, watermark_text='@WOTC_Tracker'):
     ax1 = fig.add_subplot(111)
 
     width = 0.25
-    keys = [(datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d') for d in buckets['all'].keys()]
+    keys = [datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1) for d in buckets['all'].keys()]
     xkeys = [d - timedelta(hours=3) for d in keys]
     pkeys = [d + timedelta(hours=3) for d in keys]
     xbox_bars = ax1.bar(xkeys, buckets['xbox'].values(), width=width, color='g')
