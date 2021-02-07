@@ -900,7 +900,7 @@ def create_five_battles_minimum_chart(buckets, watermark_text='@WOTC_Tracker'):
             list(buckets['ps'].values()),
             list(buckets['all'].values())],
         rowLabels=['xbox', 'ps', 'all'],
-        colLabels=keys,
+        colLabels=[d.strftime('%Y-%m-%d') for d in keys],
         loc='bottom')
     ax1.set_ylabel('Accounts')
     ax1.set_xticks([])
