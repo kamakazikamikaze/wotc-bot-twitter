@@ -6,6 +6,7 @@ from json import dump, load
 from math import pi, sin, cos
 from matplotlib import pyplot as plt
 from matplotlib import dates as mdates
+from requests import get
 from tweepy import OAuthHandler, API
 
 
@@ -369,6 +370,186 @@ five_battles_a_day_query = {
     }
 }
 
+CW_TANKS = (
+    'tank_id:71425 OR tank_id:154145 OR tank_id:154401 OR tank_id:154881 OR '
+    'tank_id:155137 OR tank_id:155937 OR tank_id:156449 OR tank_id:156961 OR '
+    'tank_id:157185 OR tank_id:157217 OR tank_id:157953 OR tank_id:158977 OR '
+    'tank_id:184321 OR tank_id:184353 OR tank_id:189441 OR tank_id:195361 OR '
+    'tank_id:201473 OR tank_id:202785 OR tank_id:230657 OR tank_id:235009 OR '
+    'tank_id:256545'
+    )
+
+cw_popular_tanks_query = {
+    "aggs": {
+        "2": {
+            "date_histogram": {
+                "field": "date",
+                "interval": "1d",
+                "min_doc_count": 0
+            },
+            "aggs": {
+                "4": {
+                    "terms": {
+                        "field": "console.keyword",
+                        "size": 5,
+                        "order": {
+                            "1": "desc"
+                        }
+                    },
+                    "aggs": {
+                        "1": {
+                            "sum": {
+                                "field": "battles"
+                            }
+                        },
+                        "3": {
+                            "terms": {
+                                "field": "tank_id",
+                                "size": 5,
+                                "order": {
+                                    "1": "desc"
+                                }
+                            },
+                            "aggs": {
+                                "1": {
+                                    "sum": {
+                                        "field": "battles"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "size": 0,
+    "_source": {
+        "excludes": []
+    },
+    "stored_fields": [
+        "*"
+    ],
+    "script_fields": {},
+    "docvalue_fields": [
+        {
+            "field": "date",
+            "format": "date_time"
+        }
+    ],
+    "query": {
+        "bool": {
+            "must": [
+                {
+                    "query_string": {
+                        "query": CW_TANKS,
+                        "analyze_wildcard": True,
+                        "default_field": "*"
+                    }
+                },
+                {
+                    "range": {
+                        "date": {
+                            "gt": None,
+                            "lte": None,
+                            "format": "date"
+                        }
+                    }
+                }
+            ],
+            "filter": [],
+            "should": [],
+            "must_not": []
+        }
+    }
+}
+
+ww2_popular_tanks_query = {
+    "aggs": {
+        "2": {
+            "date_histogram": {
+                "field": "date",
+                "interval": "30m",
+                "time_zone": "America/Chicago",
+                "min_doc_count": 1
+            },
+            "aggs": {
+                "4": {
+                    "terms": {
+                        "field": "console.keyword",
+                        "size": 5,
+                        "order": {
+                            "1": "desc"
+                        }
+                    },
+                    "aggs": {
+                        "1": {
+                            "sum": {
+                                "field": "battles"
+                            }
+                        },
+                        "3": {
+                            "terms": {
+                                "field": "tank_id",
+                                "size": 5,
+                                "order": {
+                                    "1": "desc"
+                                }
+                            },
+                            "aggs": {
+                                "1": {
+                                    "sum": {
+                                        "field": "battles"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "size": 0,
+    "_source": {
+        "excludes": []
+    },
+    "stored_fields": [
+        "*"
+    ],
+    "script_fields": {},
+    "docvalue_fields": [
+        {
+            "field": "date",
+            "format": "date_time"
+        }
+    ],
+    "query": {
+        "bool": {
+            "must": [
+                {
+                    "query_string": {
+                        "query": 'NOT (' + CW_TANKS + ')',
+                        "analyze_wildcard": True,
+                        "default_field": "*"
+                    }
+                },
+                {
+                    "range": {
+                        "date": {
+                            "gt": None,
+                            "lte": None,
+                            "format": "date"
+                        }
+                    }
+                }
+            ],
+            "filter": [],
+            "should": [],
+            "must_not": []
+        }
+    }
+}
+
 BATTLES_PNG = '/tmp/battles.png'
 PLAYERS_PNG = '/tmp/players.png'
 NEWPLAYERS_PNG = '/tmp/newplayers.png'
@@ -401,7 +582,8 @@ def manage_config(mode, filename='config.json'):
                     'elasticsearch': {
                         'hosts': ['127.0.0.1']
                     },
-                    'es index': 'diff_battles-*',
+                    'battle index': 'diff_battles-*',
+                    'tank index': 'diff_tanks-*',
                     'unique': [7, 14, 30],
                     'account age': [7, 30, 90, 180, 365, 730, 1095, 1460, 1825],
                     'battle ranges': [
@@ -436,8 +618,8 @@ def query_es_for_graphs(config):
     new_players_query['query']['bool'][
         'must'][-1]['range']['created_at']['lt'] = now.strftime('%Y-%m-%d')
     # Query Elasticsearch
-    battles = es.search(index=config['es index'], body=battles_query)
-    players = es.search(index=config['es index'], body=players_query)
+    battles = es.search(index=config['battle index'], body=battles_query)
+    players = es.search(index=config['battle index'], body=players_query)
     newplayers = es.search(index='players', body=new_players_query)
     # Filter numbers
     battles_xbox = []
@@ -497,7 +679,7 @@ def query_es_for_unique(config):
     for earliest in config['unique']:
         unique_count_query['query']['bool']['must'][-1]['range']['date'][
             'gte'] = (now - timedelta(days=earliest)).strftime('%Y-%m-%d')
-        results = es.search(index=config['es index'], body=unique_count_query)
+        results = es.search(index=config['battle index'], body=unique_count_query)
         for bucket in results['aggregations']['2']['buckets']:
             if bucket['key'] == 'xbox':
                 unique['Xbox'].append(bucket['1']['value'])
@@ -583,7 +765,7 @@ def query_es_for_active_accounts(config):
 
     # Get all account IDs of active players
     hits = []
-    response = es.search(index=config['es index'], body=personal_players_query, scroll='30s')
+    response = es.search(index=config['battle index'], body=personal_players_query, scroll='30s')
     while len(response['hits']['hits']):
         hits.extend(response['hits']['hits'])
         response = es.scroll(scroll_id=response['_scroll_id'], scroll='3s')
@@ -754,7 +936,7 @@ def query_es_for_accounts_by_battles(config):
     if 'battle ranges' in config:
         accounts_per_battles_range_query['aggs']['2']['range']['ranges'] = config['battle ranges']
 
-    response = es.search(index=config['es index'], body=accounts_per_battles_range_query)
+    response = es.search(index=config['battle index'], body=accounts_per_battles_range_query)
     buckets = {
         "xbox": OrderedDict((v, 0) for v in response['aggregations']['2']['buckets'].keys()),
         "ps": OrderedDict((v, 0) for v in response['aggregations']['2']['buckets'].keys()),
@@ -861,7 +1043,7 @@ def query_five_battles_a_day_minimum(config):
     es = Elasticsearch(**config['elasticsearch'])
     five_battles_a_day_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
     five_battles_a_day_query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    response = es.search(index=config['es index'], body=five_battles_a_day_query)
+    response = es.search(index=config['battle index'], body=five_battles_a_day_query)
 
     buckets = {
         "xbox": OrderedDict(),
@@ -923,8 +1105,8 @@ def query_long_term_data(config, filter_server_failures=True):
     players_query['query']['bool'][
         'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
 
-    players = es.search(index=config['es index'], body=players_query)
-    battles = es.search(index=config['es index'], body=battles_query)
+    players = es.search(index=config['battle index'], body=players_query)
+    battles = es.search(index=config['battle index'], body=battles_query)
 
     players_buckets = {
         "xbox": OrderedDict(),
@@ -1167,6 +1349,66 @@ def share_unique_with_twitter(config, unique):
         )
 
 
+def query_es_for_top_tanks(config, era):
+    now = datetime.utcnow()
+    then = now - timedelta(days=1)
+    es = Elasticsearch(**config['elasticsearch'])
+    if era == 'ww2':
+        query = ww2_popular_tanks_query
+    elif era == 'cw':
+        query = cw_popular_tanks_query
+    # Setup query
+    query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
+    query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    # Query Elasticsearch
+    response = es.search(index=config['tank index'], body=query)
+    buckets = {
+        'xbox': OrderedDict(),
+        'ps': OrderedDict()
+    }
+    for bucket in response['aggregations']['2']['buckets']:
+        for subbucket in bucket['4']['buckets']:
+            key = subbucket['key']
+            for tank in subbucket['3']['buckets']:
+                buckets[key][tank['key']] = int(tank['1']['value'])
+    return buckets
+
+
+def query_for_tank_info(tanks):
+    url = 'https://wotconsole.ru/api/tankopedia/en/{}.json'
+    new_tanks = {
+        'xbox': OrderedDict(),
+        'ps': OrderedDict()
+    }
+    for plat, t in tanks.items():
+        for tank, battles in t.items():
+            response = get(url.format(tank))
+            new_tanks[plat][response.json()['info']['user_string']] = battles
+    new_tanks['playstation'] = new_tanks['ps']
+    del new_tanks['ps']
+    return new_tanks
+
+
+def share_top_tanks(config, era, top):
+    auth = OAuthHandler(
+        config['twitter']['api key'],
+        config['twitter']['api secret key'])
+    auth.set_access_token(
+        config['twitter']['access token'],
+        config['twitter']['access token secret'])
+    api = API(auth)
+    for platform, tanks in top.items():
+        status = "Yesterday's most used {} tanks on {}\n{}"
+        formatting = '{}: {} battles'
+        api.update_status(
+            status=status.format(
+                era,
+                platform.capitalize(),
+                '\n'.join([formatting.format(tank, battles) for tank, battles in tanks.items()])
+            )
+        )
+
+
 def get_universal_params(config):
     params = dict()
     watermark = config.get('watermark text', None)
@@ -1179,38 +1421,68 @@ if __name__ == '__main__':
     agp = ArgumentParser(
         description='Bot for processing tracker data and uploading to Twitter')
     agp.add_argument('config', help='Config file location')
+    agp.add_argument('-u', '--upload', help='Upload to twitter', action='store_true')
+    agp.add_argument('--activity-graphs', action='store_true')
+    agp.add_argument('--account-age', action='store_true')
+    agp.add_argument('--accounts-by-battles', action='store_true')
+    agp.add_argument('--five-battles-min', action='store_true')
+    agp.add_argument('--long-term', action='store_true')
+    agp.add_argument('--share-unique', action='store_true')
+    agp.add_argument('--top-cw-tanks', action='store_true')
+    agp.add_argument('--top-ww2-tanks', action='store_true')
     args = agp.parse_args()
     config = manage_config('read', args.config)
     additional_params = get_universal_params(config)
     now = datetime.utcnow()
-    try:
-        create_activity_graphs(*query_es_for_graphs(config), **additional_params)
-        upload_activity_graphs_to_twitter(config)
-    except Exception as e:
-        print(e)
-    try:
-        create_account_age_chart(query_es_for_active_accounts(config), **additional_params)
-        upload_account_age_graph_to_twitter(config)
-    except Exception as e:
-        print(e)
-    try:
-        create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config), **additional_params)
-        upload_accounts_by_battles_chart_to_twitter(config)
-    except Exception as e:
-        print(e)
-    try:
-        create_five_battles_minimum_chart(query_five_battles_a_day_minimum(config), **additional_params)
-        upload_five_battles_minimum_chart_to_twitter(config)
-    except Exception as e:
-        print(e)
-    # Limit long-term views to beginning of month to review previous month's history
-    if now.day == 1:
+    if args.activity_graphs:
         try:
-            create_long_term_charts(*query_long_term_data(config, config.get('omit errors long term', True)), **additional_params)
-            upload_long_term_charts(config)
+            create_activity_graphs(*query_es_for_graphs(config), **additional_params)
+            if args.upload:
+                upload_activity_graphs_to_twitter(config)
         except Exception as e:
             print(e)
-    try:
-        share_unique_with_twitter(config, query_es_for_unique(config))
-    except Exception as e:
-        print(e)
+    if args.account_age:
+        try:
+            create_account_age_chart(query_es_for_active_accounts(config), **additional_params)
+            if args.upload:
+                upload_account_age_graph_to_twitter(config)
+        except Exception as e:
+            print(e)
+    if args.accounts_by_battles:
+        try:
+            create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config), **additional_params)
+            if args.upload:
+                upload_accounts_by_battles_chart_to_twitter(config)
+        except Exception as e:
+            print(e)
+    if args.five_battles_min:
+        try:
+            create_five_battles_minimum_chart(query_five_battles_a_day_minimum(config), **additional_params)
+            if args.upload:
+                upload_five_battles_minimum_chart_to_twitter(config)
+        except Exception as e:
+            print(e)
+    # Limit long-term views to beginning of month to review previous month's history
+    if args.long_term:
+        if now.day == 1:
+            try:
+                create_long_term_charts(*query_long_term_data(config, config.get('omit errors long term', True)), **additional_params)
+                if args.upload:
+                    upload_long_term_charts(config)
+            except Exception as e:
+                print(e)
+    if args.share_unique:
+        try:
+            share_unique_with_twitter(config, query_es_for_unique(config))
+        except Exception as e:
+            print(e)
+    if args.top_cw_tanks:
+        try:
+            share_top_tanks(config, 'CW', query_for_tank_info(query_es_for_top_tanks(config, 'cw')))
+        except Exception as e:
+            print(e)
+    if args.top_ww2_tanks:
+        try:
+            share_top_tanks(config, 'WW2', query_for_tank_info(query_es_for_top_tanks(config, 'ww2')))
+        except Exception as e:
+            print(e)
