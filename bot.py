@@ -1207,10 +1207,11 @@ def create_long_term_charts(players_buckets, battles_buckets, average_battles_pe
     ax1.set_xticks(dates)
     ax1.grid()
     ax1.legend()
-    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.text(0.5, -0.15, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.tight_layout()
     fig.autofmt_xdate()
-    ax1.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
+    # ax1.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
     fig.savefig(PLAYERSLONG_PNG)
     del fig
     # Battles PNG
@@ -1224,10 +1225,11 @@ def create_long_term_charts(players_buckets, battles_buckets, average_battles_pe
     ax1.set_xticks(dates)
     ax1.grid()
     ax1.legend()
-    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.text(0.5, -0.15, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.tight_layout()
     fig.autofmt_xdate()
-    ax1.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
+    # ax1.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
     fig.savefig(BATTLESLONG_PNG)
     del fig
     # Average PNG
@@ -1241,10 +1243,11 @@ def create_long_term_charts(players_buckets, battles_buckets, average_battles_pe
     ax1.set_xticks(dates)
     ax1.grid()
     ax1.legend()
-    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.text(0.5, -0.15, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.tight_layout()
     fig.autofmt_xdate()
-    ax1.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
+    # ax1.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
     fig.savefig(AVERAGELONG_PNG)
     del fig
 
