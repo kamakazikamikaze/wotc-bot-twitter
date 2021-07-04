@@ -370,14 +370,7 @@ five_battles_a_day_query = {
     }
 }
 
-CW_TANKS = (
-    'tank_id:71425 OR tank_id:154145 OR tank_id:154401 OR tank_id:154881 OR '
-    'tank_id:155137 OR tank_id:155937 OR tank_id:156449 OR tank_id:156961 OR '
-    'tank_id:157185 OR tank_id:157217 OR tank_id:157953 OR tank_id:158977 OR '
-    'tank_id:184321 OR tank_id:184353 OR tank_id:189441 OR tank_id:195361 OR '
-    'tank_id:201473 OR tank_id:202785 OR tank_id:230657 OR tank_id:235009 OR '
-    'tank_id:256545'
-    )
+CW_TANKS = 'ASSIGN `build_cw_tanks_list(config)` TO ME'
 
 cw_popular_tanks_query = {
     "aggs": {
@@ -595,7 +588,8 @@ def manage_config(mode, filename='config.json'):
                         {"from": 40, "to": 50},
                         {"from": 50}
                     ],
-                    'watermark text': '@WOTC_Tracker'
+                    'watermark text': '@WOTC_Tracker',
+                    'wg api key': 'DEMO'
                 }
             )
 
@@ -1352,6 +1346,23 @@ def share_unique_with_twitter(config, unique):
         )
 
 
+def build_cw_tanks_list(config):
+    api = 'https://api-console.worldoftanks.com/wotx/encyclopedia/vehicles/'
+    params = {
+        'application_id': config['wg api key'],
+        'fields': 'era,tank_id'
+    }
+    data = get(api, params=params).json()['data']
+    return ' OR '.join(
+        list(
+            map(
+                lambda t: 'tank_id:{}'.format(t['tank_id']),
+                filter(lambda t: t['era'] != '', data.values())
+                )
+            )
+        )
+
+
 def query_es_for_top_tanks(config, era):
     now = datetime.utcnow()
     then = now - timedelta(days=1)
@@ -1392,7 +1403,7 @@ def query_for_tank_info(tanks):
     return new_tanks
 
 
-def share_top_tanks(config, era, top):
+def share_top_tanks(config, era, top, day):
     auth = OAuthHandler(
         config['twitter']['api key'],
         config['twitter']['api secret key'])
@@ -1401,12 +1412,13 @@ def share_top_tanks(config, era, top):
         config['twitter']['access token secret'])
     api = API(auth)
     for platform, tanks in top.items():
-        status = "Yesterday's most used {} tanks on {}\n{}"
+        status = "Most used {} tanks on {} for {}\n{}"
         formatting = '{}: {} battles'
         api.update_status(
             status=status.format(
                 era,
                 platform.capitalize(),
+                day,
                 '\n'.join([formatting.format(tank, battles) for tank, battles in tanks.items()])
             )
         )
@@ -1479,13 +1491,17 @@ if __name__ == '__main__':
             share_unique_with_twitter(config, query_es_for_unique(config))
         except Exception as e:
             print(e)
+    if args.top_cw_tanks or args.top_ww2_tanks:
+        CW_TANKS = build_cw_tanks_list(config)
+        cw_popular_tanks_query['query']['bool']['must'][0]['query_string']['query'] = CW_TANKS
+        ww2_popular_tanks_query['query']['bool']['must'][0]['query_string']['query'] = 'NOT (' + CW_TANKS + ')'
     if args.top_cw_tanks:
         try:
-            share_top_tanks(config, 'CW', query_for_tank_info(query_es_for_top_tanks(config, 'cw')))
+            share_top_tanks(config, 'CW', query_for_tank_info(query_es_for_top_tanks(config, 'cw')), (now - timedelta(days=1)).strftime('%Y-%m-%d'))
         except Exception as e:
             print(e)
     if args.top_ww2_tanks:
         try:
-            share_top_tanks(config, 'WW2', query_for_tank_info(query_es_for_top_tanks(config, 'ww2')))
+            share_top_tanks(config, 'WW2', query_for_tank_info(query_es_for_top_tanks(config, 'ww2')), (now - timedelta(days=1)).strftime('%Y-%m-%d'))
         except Exception as e:
             print(e)
