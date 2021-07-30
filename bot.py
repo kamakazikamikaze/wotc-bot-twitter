@@ -6,8 +6,10 @@ from json import dump, load
 from math import pi, sin, cos
 from matplotlib import pyplot as plt
 from matplotlib import dates as mdates
+from matplotlib import ticker as mtick
 from requests import get
 from tweepy import OAuthHandler, API
+import traceback
 
 
 # Multi-day, use gte
@@ -443,7 +445,7 @@ cw_popular_tanks_query = {
                 {
                     "range": {
                         "date": {
-                            "gt": None,
+                            "gte": None,
                             "lte": None,
                             "format": "date"
                         }
@@ -464,7 +466,7 @@ ww2_popular_tanks_query = {
                 "field": "date",
                 "interval": "30m",
                 "time_zone": "America/Chicago",
-                "min_doc_count": 1
+                "min_doc_count": 0
             },
             "aggs": {
                 "4": {
@@ -529,7 +531,7 @@ ww2_popular_tanks_query = {
                 {
                     "range": {
                         "date": {
-                            "gt": None,
+                            "gte": None,
                             "lte": None,
                             "format": "date"
                         }
@@ -553,6 +555,10 @@ FIVEADAY_PNG = '/tmp/fiveaday.png'
 PLAYERSLONG_PNG = '/tmp/playerslong.png'
 BATTLESLONG_PNG = '/tmp/battleslong.png'
 AVERAGELONG_PNG = '/tmp/averagelong.png'
+MODEBREAKDOWN_PNG = '/tmp/modebreakdown.png'
+MODEBREAKDOWNLONG_PNG = '/tmp/modebreakdownlong.png'
+MODEBREAKDOWNPERCENT_PNG = '/tmp/modebreakdownpercent.png'
+MODEBREAKDOWNPERCENTLONG_PNG = '/tmp/modebreakdownpercentlong.png'
 
 def manage_config(mode, filename='config.json'):
     if mode == 'read':
@@ -1263,6 +1269,22 @@ def upload_long_term_charts(config):
     )
 
 
+def upload_long_term_mode_charts(config):
+    auth = OAuthHandler(
+        config['twitter']['api key'],
+        config['twitter']['api secret key'])
+    auth.set_access_token(
+        config['twitter']['access token'],
+        config['twitter']['access token secret'])
+    api = API(auth)
+    modelong = api.media_upload(MODEBREAKDOWNLONG_PNG)
+    percentlong = api.media_upload(MODEBREAKDOWNPERCENTLONG_PNG)
+    api.update_status(
+        status='Long-term view of battles per mode',
+        media_ids=[modelong.media_id, percentlong.media_id]
+    )
+
+
 def upload_activity_graphs_to_twitter(config):
     auth = OAuthHandler(
         config['twitter']['api key'],
@@ -1424,6 +1446,118 @@ def share_top_tanks(config, era, top, day):
         )
 
 
+def query_es_for_mode_battles_difference(config, long_term=False):
+    now = datetime.utcnow()
+    then = now - timedelta(days=config['days'] if not long_term else config['long term'])
+    es = Elasticsearch(**config['elasticsearch'])
+    # Setup query
+    battles_query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
+    battles_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    cw_popular_tanks_query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
+    cw_popular_tanks_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    # Query Elasticsearch
+    total_battles_response = es.search(index=config['battle index'], body=battles_query)
+    cw_battles_response = es.search(index=config['tank index'], body=cw_popular_tanks_query)
+    dates = [b['key_as_string'].split('T')[0] for b in total_battles_response[
+        'aggregations']['2']['buckets']]
+    # Filter numbers
+    ww2_battles_xbox = OrderedDict()
+    ww2_battles_ps = OrderedDict()
+    cw_battles_xbox = OrderedDict()
+    cw_battles_ps = OrderedDict()
+    percent_cw_xbox = OrderedDict()
+    percent_cw_ps = OrderedDict()
+    for d in dates:
+        ww2_battles_xbox[d] = 0
+        ww2_battles_ps[d] = 0
+        cw_battles_xbox[d] = 0
+        cw_battles_ps[d] = 0
+        percent_cw_xbox[d] = None
+        percent_cw_ps[d] = None
+    for bucket in total_battles_response['aggregations']['2']['buckets']:
+        if not bucket['3']['buckets']:
+            continue
+        for subbucket in bucket['3']['buckets']:
+            if subbucket['key'] == 'xbox':
+                ww2_battles_xbox[bucket['key_as_string'].split('T')[0]] = subbucket['1']['value']
+            else:
+                ww2_battles_ps[bucket['key_as_string'].split('T')[0]] = subbucket['1']['value']
+    for bucket in cw_battles_response['aggregations']['2']['buckets']:
+        if not bucket['4']['buckets']:
+            continue
+        for subbucket in bucket['4']['buckets']:
+            if subbucket['key'] == 'xbox':
+                cw_battles_xbox[bucket['key_as_string'].split('T')[0]] = subbucket['1']['value']
+            else:
+                cw_battles_ps[bucket['key_as_string'].split('T')[0]] = subbucket['1']['value']
+    for i in range(len(dates)):
+        percent_cw_xbox[dates[i]] = cw_battles_xbox[dates[i]] / ww2_battles_xbox[dates[i]]
+        percent_cw_ps[dates[i]] = cw_battles_ps[dates[i]] / ww2_battles_ps[dates[i]]
+        ww2_battles_xbox[dates[i]] = ww2_battles_xbox[dates[i]] - cw_battles_xbox[dates[i]]
+        ww2_battles_ps[dates[i]] = ww2_battles_ps[dates[i]] - cw_battles_ps[dates[i]]
+    return dates, list(ww2_battles_xbox.values()), list(ww2_battles_ps.values()), list(cw_battles_xbox.values()), list(cw_battles_ps.values()), list(percent_cw_xbox.values()), list(percent_cw_ps.values())
+
+
+def create_mode_difference_graph(dates, ww2_battles_xbox, ww2_battles_ps, cw_battles_xbox, cw_battles_ps, percent_cw_xbox, percent_cw_ps, long_term=False, watermark_text='@WOTC_Tracker'):
+    shifted_dates = [(datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d') for d in dates]
+    # Mode PNG
+    plt.clf()
+    fig = plt.figure(figsize=(11, 8), dpi=150) if not long_term else plt.figure(figsize=(24, 8), dpi=150)
+    fig.suptitle('Estimated breakdown of battles between CW and WW2, per platform' if not long_term else 'Estimated breakdown of battles between CW and WW2, per platform (long term)')
+    # ax1 = plt.axes()
+    ax1 = fig.add_subplot(111)
+    ax1.tick_params(axis='x', labelrotation=45)
+    ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.set_xticklabels(shifted_dates, ha='right')
+    ax1.plot(shifted_dates, ww2_battles_xbox, color='darkgreen', linewidth=2, label='WW2: Xbox')
+    ax1.plot(shifted_dates, cw_battles_xbox, color='lightgreen', linewidth=2, label='CW: Xbox')
+    ax1.plot(shifted_dates, ww2_battles_ps, color='darkblue', linewidth=2, label='WW2: Playstation')
+    ax1.plot(shifted_dates, cw_battles_ps, color='lightblue', linewidth=2, label='CW: Playstation')
+    ax1.set_ylim(bottom=0)
+    # for i in range(len(shifted_dates)):
+    #     xbox_text = ax1.annotate(annotations_xbox[i], (shifted_dates[i], ww2_battles_xbox[i]), verticalalignment='bottom', size=12 if not long_term else 8)
+    #     ps_text = ax1.annotate(annotations_ps[i], (shifted_dates[i], ww2_battles_ps[i]), verticalalignment='bottom', size=12 if not long_term else 8)
+    #     xbox_text.set_rotation(90)
+    #     ps_text.set_rotation(90)
+    ax1.grid()
+    ax1.legend()
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.savefig(MODEBREAKDOWN_PNG if not long_term else MODEBREAKDOWNLONG_PNG)
+    del fig
+    # Mode Percent PNG
+    plt.clf()
+    fig = plt.figure(figsize=(11, 8), dpi=150) if not long_term else plt.figure(figsize=(24, 8), dpi=150)
+    fig.suptitle('Estimated percentage of battles taking place in CW, per platform' if not long_term else 'Estimated percentage of battles taking place in CW, per platform (long term)')
+    # ax1 = plt.axes()
+    ax1 = fig.add_subplot(111)
+    ax1.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+    ax1.tick_params(axis='x', labelrotation=45)
+    ax1.set_xticklabels(shifted_dates, ha='right')
+    ax1.plot(shifted_dates, percent_cw_xbox, color='green', linewidth=2, label='Xbox')
+    ax1.plot(shifted_dates, percent_cw_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.grid()
+    ax1.legend()
+    ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    fig.savefig(MODEBREAKDOWNPERCENT_PNG if not long_term else MODEBREAKDOWNPERCENTLONG_PNG)
+    del fig
+
+
+def upload_mode_breakdown_to_twitter(config):
+    auth = OAuthHandler(
+        config['twitter']['api key'],
+        config['twitter']['api secret key'])
+    auth.set_access_token(
+        config['twitter']['access token'],
+        config['twitter']['access token secret'])
+    api = API(auth)
+    battles = api.media_upload(MODEBREAKDOWN_PNG)
+    percent = api.media_upload(MODEBREAKDOWNPERCENT_PNG)
+    api.update_status(
+        status="Estimated split between WW2 and CW battles",
+        media_ids=[battles.media_id, percent.media_id]
+    )
+
+
 def get_universal_params(config):
     params = dict()
     watermark = config.get('watermark text', None)
@@ -1445,63 +1579,82 @@ if __name__ == '__main__':
     agp.add_argument('--share-unique', action='store_true')
     agp.add_argument('--top-cw-tanks', action='store_true')
     agp.add_argument('--top-ww2-tanks', action='store_true')
+    agp.add_argument('--mode-breakdown', action='store_true')
     args = agp.parse_args()
     config = manage_config('read', args.config)
     additional_params = get_universal_params(config)
     now = datetime.utcnow()
+    if args.top_cw_tanks or args.top_ww2_tanks or args.mode_breakdown or args.long_term:
+        CW_TANKS = build_cw_tanks_list(config)
+        cw_popular_tanks_query['query']['bool']['must'][0]['query_string']['query'] = CW_TANKS
+        ww2_popular_tanks_query['query']['bool']['must'][0]['query_string']['query'] = 'NOT (' + CW_TANKS + ')'
     if args.activity_graphs:
         try:
             create_activity_graphs(*query_es_for_graphs(config), **additional_params)
             if args.upload:
                 upload_activity_graphs_to_twitter(config)
         except Exception as e:
-            print(e)
+            # print(e)
+            traceback.print_exc()
     if args.account_age:
         try:
             create_account_age_chart(query_es_for_active_accounts(config), **additional_params)
             if args.upload:
                 upload_account_age_graph_to_twitter(config)
         except Exception as e:
-            print(e)
+            # print(e)
+            traceback.print_exc()
     if args.accounts_by_battles:
         try:
             create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config), **additional_params)
             if args.upload:
                 upload_accounts_by_battles_chart_to_twitter(config)
         except Exception as e:
-            print(e)
+            # print(e)
+            traceback.print_exc()
     if args.five_battles_min:
         try:
             create_five_battles_minimum_chart(query_five_battles_a_day_minimum(config), **additional_params)
             if args.upload:
                 upload_five_battles_minimum_chart_to_twitter(config)
         except Exception as e:
-            print(e)
+            # print(e)
+            traceback.print_exc()
     # Limit long-term views to beginning of month to review previous month's history
     if args.long_term:
         if now.day == 1:
             try:
                 create_long_term_charts(*query_long_term_data(config, config.get('omit errors long term', True)), **additional_params)
+                create_mode_difference_graph(*query_es_for_mode_battles_difference(config, long_term=True), long_term=True, **additional_params)
                 if args.upload:
                     upload_long_term_charts(config)
+                    upload_long_term_mode_charts(config)
             except Exception as e:
-                print(e)
+                # print(e)
+                traceback.print_exc()
     if args.share_unique:
         try:
             share_unique_with_twitter(config, query_es_for_unique(config))
         except Exception as e:
-            print(e)
-    if args.top_cw_tanks or args.top_ww2_tanks:
-        CW_TANKS = build_cw_tanks_list(config)
-        cw_popular_tanks_query['query']['bool']['must'][0]['query_string']['query'] = CW_TANKS
-        ww2_popular_tanks_query['query']['bool']['must'][0]['query_string']['query'] = 'NOT (' + CW_TANKS + ')'
+            # print(e)
+            traceback.print_exc()
     if args.top_cw_tanks:
         try:
             share_top_tanks(config, 'CW', query_for_tank_info(query_es_for_top_tanks(config, 'cw')), (now - timedelta(days=1)).strftime('%Y-%m-%d'))
         except Exception as e:
-            print(e)
+            # print(e)
+            traceback.print_exc()
     if args.top_ww2_tanks:
         try:
             share_top_tanks(config, 'WW2', query_for_tank_info(query_es_for_top_tanks(config, 'ww2')), (now - timedelta(days=1)).strftime('%Y-%m-%d'))
         except Exception as e:
-            print(e)
+            # print(e)
+            traceback.print_exc()
+    if args.mode_breakdown:
+        try:
+            create_mode_difference_graph(*query_es_for_mode_battles_difference(config), **additional_params)
+            if args.upload:
+                upload_mode_breakdown_to_twitter(config)
+        except Exception as e:
+            # print(e)
+            traceback.print_exc()
