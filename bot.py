@@ -1,564 +1,124 @@
 from argparse import ArgumentParser
+from asyncio import run, set_event_loop_policy, WindowsSelectorEventLoopPolicy
+from asyncpg import connect
 from collections import OrderedDict
 from datetime import datetime, timedelta
-from elasticsearch6 import Elasticsearch
 from json import dump, load
 from math import pi, sin, cos
 from matplotlib import pyplot as plt
 from matplotlib import dates as mdates
 from matplotlib import ticker as mtick
+from platform import system
 from requests import get
 from tweepy import OAuthHandler, API
 import traceback
 
 
 # Multi-day, use gte
-battles_query = {
-    "aggs": {
-        "2": {
-            "date_histogram": {
-                "field": "date",
-                "interval": "1d",
-                "min_doc_count": 0
-            },
-            "aggs": {
-                "3": {
-                    "terms": {
-                        "field": "console.keyword",
-                        "size": 2,
-                        "order": {
-                            "1": "desc"
-                        },
-                        "min_doc_count": 0
-                    },
-                    "aggs": {
-                        "1": {
-                            "sum": {
-                                "field": "battles"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    },
-    "size": 0,
-    "_source": {"excludes": []},
-    "stored_fields": ["*"],
-    "script_fields": {},
-    "docvalue_fields": [
-        {
-            "field": "date",
-            "format": "date_time"
-        }
-    ],
-    "query": {
-        "bool": {
-            "must": [
-                {"match_all": {}},
-                {"match_all": {}},
-                {
-                    "range": {
-                        "date": {
-                            "gte": None,
-                            "lte": None,
-                            "format": "date"
-                        }
-                    }
-                }
-            ],
-            "filter": [],
-            "should": [],
-            "must_not": []
-        }
-    }
-}
+battles_query = '''
+    SELECT sum(battles), console, _date
+    FROM diff_battles
+    WHERE _date >= '{}' AND _date < '{}'
+    GROUP BY console, _date
+    ORDER BY console, _date ASC
+'''
 
 # Multi-day, use gte
-players_query = {
-    "aggs": {
-        "2": {
-            "date_histogram": {
-                "field": "date",
-                "interval": "1d",
-                "min_doc_count": 0
-            },
-            "aggs": {
-                "3": {
-                    "terms": {
-                        "field": "console.keyword",
-                        "size": 2,
-                        "order": {
-                            "_count": "desc"
-                        },
-                        "min_doc_count": 0
-                    }
-                }
-            }
-        }
-    },
-    "size": 0,
-    "_source": {"excludes": []},
-    "stored_fields": ["*"],
-    "script_fields": {},
-    "docvalue_fields": [
-        {
-            "field": "date",
-            "format": "date_time"
-        }
-    ],
-    "query": {
-        "bool": {
-            "must": [
-                {"match_all": {}},
-                {"match_all": {}},
-                {
-                    "range": {
-                        "date": {
-                            "gte": None,
-                            "lte": None,
-                            "format": "date"
-                        }
-                    }
-                }
-            ],
-            "filter": [],
-            "should": [],
-            "must_not": []
-        }
-    }
-}
+players_query = '''
+    SELECT count(account_id), console, _date
+    FROM diff_battles
+    WHERE _date >= '{}' AND _date < '{}'
+    GROUP BY console, _date
+    ORDER BY console, _date ASC
+'''
 
-unique_count_query = {
-    "aggs": {
-        "2": {
-            "terms": {
-                "field": "console.keyword",
-                "size": 2,
-                "order": {
-                    "1": "desc"
-                }
-            },
-            "aggs": {
-                "1": {
-                    "cardinality": {
-                        "field": "account_id"
-                    }
-                }
-            }
-        }
-    },
-    "size": 0,
-    "_source": {"excludes": []},
-    "stored_fields": ["*"],
-    "script_fields": {},
-    "docvalue_fields": [
-        {
-            "field": "date",
-            "format": "date_time"
-        }
-    ],
-    "query": {
-        "bool": {
-            "must": [
-                {"match_all": {}},
-                {"match_all": {}},
-                {
-                    "range": {
-                        "date": {
-                            "gte": None,
-                            "lte": None,
-                            "format": "date"
-                        }
-                    }
-                }
-            ],
-            "filter": [],
-            "should": [],
-            "must_not": []
-        }
-    }
-}
+unique_count_query = '''
+    SELECT count(distinct(account_id)), console
+    FROM diff_battles
+    WHERE _date >= '{}' _date < '{}'
+    GROUP BY console
+    ORDER BY console
+'''
 
-new_players_query = {
-    "aggs": {
-        "2": {
-            "date_histogram": {
-                "field": "created_at",
-                "interval": "1d",
-                "min_doc_count": 0
-            },
-            "aggs": {
-                "3": {
-                    "terms": {
-                        "field": "console.keyword",
-                        "size": 2,
-                        "order": {
-                            "_count": "desc"
-                        },
-                        "min_doc_count": 0
-                    }
-                }
-            }
-        }
-    },
-    "size": 0,
-    "_source": {"excludes": []},
-    "stored_fields": ["*"],
-    "script_fields": {},
-    "docvalue_fields": [
-        {
-            "field": "created_at",
-            "format": "date_time"
-        }
-    ],
-    "query": {
-        "bool": {
-            "must": [
-                {"match_all": {}},
-                {"match_all": {}},
-                {
-                    "range": {
-                        "created_at": {
-                            "gte": None,
-                            "lt": None,
-                            "format": "date"
-                        }
-                    }
-                }
-            ],
-            "filter": [],
-            "should": [],
-            "must_not": []
-        }
-    }
-}
+new_players_query = '''
+    SELECT count(account_id), console, created_at::date
+    FROM players
+    WHERE created_at >= '{}' AND created_at < '{}'
+    GROUP BY console, created_at::date
+    ORDER BY console, created_at::date
+'''
 
-personal_players_query = {
-    'sort': [],
-    '_source': {'excludes': []},
-    'aggs': {
-        '2': {
-            'date_histogram': {
-                'field': 'date',
-                'interval': '1d',
-                'min_doc_count': 0
-            }
-        }
-    },
-    'stored_fields': ['_source'],
-    'script_fields': {},
-    'docvalue_fields': [{'field': 'date', 'format': 'date_time'}],
-    'query': {
-        'bool': {
-            'must': [
-                {'match_all': {}},
-                {
-                    'range': {
-                        'date': {
-                            'gt': None,
-                            'lte': None,
-                            'format': 'date'
-                        }
-                    }
-                }
-            ],
-           'filter': [],
-           'should': [],
-           'must_not': []
-        }
-    },
-    'size': 500
-}
+personal_players_query = '''
+    SELECT diff_battles.account_id, players.created_at, players.console
+    FROM diff_battles, players
+    WHERE diff_battles._date >= '{}' AND diff_battles._date < '{}'
+        AND diff_battles.account_id = players.account_id
+'''
 
-accounts_per_battles_range_query = {
-    'aggs': {
-        '2': {
-            'range': {
-                'field': 'battles',
-                'ranges': [
-                    {'from': 1, 'to': 5},
-                    {'from': 5, 'to': 10},
-                    {'from': 10, 'to': 20},
-                    {'from': 20, 'to': 30},
-                    {'from': 30, 'to': 40},
-                    {'from': 40, 'to': 50},
-                    {'from': 50}
-                ],
-                'keyed': True
-            },
-            'aggs': {
-                '3': {
-                    'terms': {
-                        'field': 'console.keyword',
-                        'size': 2,
-                        'order': {'_count': 'desc'}
-                    }
-                }
-            }
-        }
-    },
-    'size': 0,
-    '_source': {'excludes': []},
-    'stored_fields': ['*'],
-    'script_fields': {},
-    'docvalue_fields': [{'field': 'date', 'format': 'date_time'}],
-    'query': {
-        'bool': {
-            'must': [
-                {'match_all': {}},
-                {'match_all': {}},
-                {'range': {'date': {'gt': None, 'lte': None, 'format': 'date'}}}
-            ],
-            'filter': [],
-            'should': [],
-            'must_not': []
-        }
-    }
-}
+accounts_per_battles_range_query = '''
+    SELECT "Battle Buckets" AS "Range", count("Battle Buckets") AS "Count of Players", console
+    FROM (
+        SELECT console,
+        CASE
+            WHEN diff_battles.battles >= 1  AND diff_battles.battles < 5  THEN '1-4'
+            WHEN diff_battles.battles >= 5  AND diff_battles.battles < 10 THEN '5-9'
+            WHEN diff_battles.battles >= 10 AND diff_battles.battles < 20 THEN '10-19'
+            WHEN diff_battles.battles >= 20 AND diff_battles.battles < 30 THEN '20-29'
+            WHEN diff_battles.battles >= 30 AND diff_battles.battles < 40 THEN '30-39'
+            WHEN diff_battles.battles >= 40 AND diff_battles.battles < 50 THEN '40-49'
+            ELSE '50-*'
+            END AS "Battle Buckets"
+        FROM diff_battles
+        WHERE _date >= '{}' AND _date < '{}'
+    ) p
+    GROUP BY console, "Battle Buckets"
+'''
 
-five_battles_a_day_query = {
-    'aggs': {
-        '4': {
-            'date_histogram': {
-                'field': 'date',
-                'interval': '1d',
-                'min_doc_count': 0
-            },
-            'aggs': {
-                '3': {
-                    'terms': {
-                        'field': 'console.keyword',
-                        'size': 2,
-                        'order': {'_count': 'desc'}
-                    },
-                    'aggs': {
-                        '2': {
-                            'range': {
-                                'field': 'battles',
-                                'ranges': [{'from': 5, 'to': None}],
-                                'keyed': True
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    },
-    'size': 0,
-    '_source': {'excludes': []},
-    'stored_fields': ['*'],
-    'script_fields': {},
-    'docvalue_fields': [{'field': 'date', 'format': 'date_time'}],
-    'query': {
-        'bool': {
-            'must': [
-                {'match_all': {}},
-                {'match_all': {}},
-                {
-                    'range': {
-                        'date': {
-                            'gte': None,
-                            'lte': None,
-                            'format': 'date'
-                        }
-                    }
-                }
-            ],
-            'filter': [],
-            'should': [],
-            'must_not': []
-        }
-    }
-}
+five_battles_a_day_query = '''
+    SELECT count(*), console, _date
+    FROM diff_battles
+    WHERE battles >= 5 AND _date >= '{}' AND _date < '{}'
+    GROUP BY console, _date
+    ORDER BY _date, console
+'''
 
-CW_TANKS = 'ASSIGN `build_cw_tanks_list(config)` TO ME'
+popular_tanks_query = '''
+    SELECT short_name, era, t_b.tank_id, console, tot_batt
+    FROM (
+        SELECT tank_id, console, sum(battles) AS tot_batt, ROW_NUMBER() OVER (PARTITION BY console ORDER BY sum(battles) DESC) AS r_id
+        FROM diff_tanks
+        WHERE _date >= '{}' AND _date < '{}'
+        GROUP BY console, tank_id
+        ORDER BY console, tot_batt DESC
+    ) AS t_b, tanks as t
+    WHERE t.tank_id = t_b.tank_id
+'''
 
-cw_popular_tanks_query = {
-    "aggs": {
-        "2": {
-            "date_histogram": {
-                "field": "date",
-                "interval": "1d",
-                "min_doc_count": 0
-            },
-            "aggs": {
-                "4": {
-                    "terms": {
-                        "field": "console.keyword",
-                        "size": 5,
-                        "order": {
-                            "1": "desc"
-                        }
-                    },
-                    "aggs": {
-                        "1": {
-                            "sum": {
-                                "field": "battles"
-                            }
-                        },
-                        "3": {
-                            "terms": {
-                                "field": "tank_id",
-                                "size": 5,
-                                "order": {
-                                    "1": "desc"
-                                }
-                            },
-                            "aggs": {
-                                "1": {
-                                    "sum": {
-                                        "field": "battles"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    },
-    "size": 0,
-    "_source": {
-        "excludes": []
-    },
-    "stored_fields": [
-        "*"
-    ],
-    "script_fields": {},
-    "docvalue_fields": [
-        {
-            "field": "date",
-            "format": "date_time"
-        }
-    ],
-    "query": {
-        "bool": {
-            "must": [
-                {
-                    "query_string": {
-                        "query": CW_TANKS,
-                        "analyze_wildcard": True,
-                        "default_field": "*"
-                    }
-                },
-                {
-                    "range": {
-                        "date": {
-                            "gte": None,
-                            "lte": None,
-                            "format": "date"
-                        }
-                    }
-                }
-            ],
-            "filter": [],
-            "should": [],
-            "must_not": []
-        }
-    }
-}
+mode_battles_query = '''
+    SELECT sum(battles), console, _date,
+    CASE
+        WHEN tanks.era <> '' THEN 'CW'
+        ELSE 'WW2'
+        END AS "t_era"
+    FROM diff_tanks, tanks
+    WHERE _date >= '{}' AND _date < '{}' AND tanks.tank_id = diff_tanks.tank_id
+    GROUP BY console, t_era, _date
+'''
 
-ww2_popular_tanks_query = {
-    "aggs": {
-        "2": {
-            "date_histogram": {
-                "field": "date",
-                "interval": "30m",
-                "time_zone": "America/Chicago",
-                "min_doc_count": 0
-            },
-            "aggs": {
-                "4": {
-                    "terms": {
-                        "field": "console.keyword",
-                        "size": 5,
-                        "order": {
-                            "1": "desc"
-                        }
-                    },
-                    "aggs": {
-                        "1": {
-                            "sum": {
-                                "field": "battles"
-                            }
-                        },
-                        "3": {
-                            "terms": {
-                                "field": "tank_id",
-                                "size": 5,
-                                "order": {
-                                    "1": "desc"
-                                }
-                            },
-                            "aggs": {
-                                "1": {
-                                    "sum": {
-                                        "field": "battles"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    },
-    "size": 0,
-    "_source": {
-        "excludes": []
-    },
-    "stored_fields": [
-        "*"
-    ],
-    "script_fields": {},
-    "docvalue_fields": [
-        {
-            "field": "date",
-            "format": "date_time"
-        }
-    ],
-    "query": {
-        "bool": {
-            "must": [
-                {
-                    "query_string": {
-                        "query": 'NOT (' + CW_TANKS + ')',
-                        "analyze_wildcard": True,
-                        "default_field": "*"
-                    }
-                },
-                {
-                    "range": {
-                        "date": {
-                            "gte": None,
-                            "lte": None,
-                            "format": "date"
-                        }
-                    }
-                }
-            ],
-            "filter": [],
-            "should": [],
-            "must_not": []
-        }
-    }
-}
-
-BATTLES_PNG = '/tmp/battles.png'
-PLAYERS_PNG = '/tmp/players.png'
-NEWPLAYERS_PNG = '/tmp/newplayers.png'
-AVERAGE_PNG = '/tmp/average.png'
-ACCOUNTAGE_PNG = '/tmp/accountage.png'
-BATTLERANGE_PNG = '/tmp/battlerange.png'
-FIVEADAY_PNG = '/tmp/fiveaday.png'
-PLAYERSLONG_PNG = '/tmp/playerslong.png'
-BATTLESLONG_PNG = '/tmp/battleslong.png'
-AVERAGELONG_PNG = '/tmp/averagelong.png'
-MODEBREAKDOWN_PNG = '/tmp/modebreakdown.png'
-MODEBREAKDOWNLONG_PNG = '/tmp/modebreakdownlong.png'
-MODEBREAKDOWNPERCENT_PNG = '/tmp/modebreakdownpercent.png'
-MODEBREAKDOWNPERCENTLONG_PNG = '/tmp/modebreakdownpercentlong.png'
+BATTLES_PNG = '{}/tmp/battles.png'.format('.' if system() == 'Windows' else '')
+PLAYERS_PNG = '{}/tmp/players.png'.format('.' if system() == 'Windows' else '')
+NEWPLAYERS_PNG = '{}/tmp/newplayers.png'.format('.' if system() == 'Windows' else '')
+AVERAGE_PNG = '{}/tmp/average.png'.format('.' if system() == 'Windows' else '')
+ACCOUNTAGE_PNG = '{}/tmp/accountage.png'.format('.' if system() == 'Windows' else '')
+BATTLERANGE_PNG = '{}/tmp/battlerange.png'.format('.' if system() == 'Windows' else '')
+FIVEADAY_PNG = '{}/tmp/fiveaday.png'.format('.' if system() == 'Windows' else '')
+PLAYERSLONG_PNG = '{}/tmp/playerslong.png'.format('.' if system() == 'Windows' else '')
+BATTLESLONG_PNG = '{}/tmp/battleslong.png'.format('.' if system() == 'Windows' else '')
+AVERAGELONG_PNG = '{}/tmp/averagelong.png'.format('.' if system() == 'Windows' else '')
+MODEBREAKDOWN_PNG = '{}/tmp/modebreakdown.png'.format('.' if system() == 'Windows' else '')
+MODEBREAKDOWNLONG_PNG = '{}/tmp/modebreakdownlong.png'.format('.' if system() == 'Windows' else '')
+MODEBREAKDOWNPERCENT_PNG = '{}/tmp/modebreakdownpercent.png'.format('.' if system() == 'Windows' else '')
+MODEBREAKDOWNPERCENTLONG_PNG = '{}/tmp/modebreakdownpercentlong.png'.format('.' if system() == 'Windows' else '')
 
 def manage_config(mode, filename='config.json'):
     if mode == 'read':
@@ -578,109 +138,78 @@ def manage_config(mode, filename='config.json'):
                         'access token secret': '',
                         'message': "Today's update on the active player count and total battles per platform for #worldoftanksconsole."
                     },
-                    'elasticsearch': {
-                        'hosts': ['127.0.0.1']
+                    'database': {
+                        'host': 'localhost',
+                        'user': 'username',
+                        'password': 'password',
+                        'database': 'battletracker',
+                        'port': 5432
                     },
-                    'battle index': 'diff_battles-*',
-                    'tank index': 'diff_tanks-*',
                     'unique': [7, 14, 30],
                     'account age': [7, 30, 90, 180, 365, 730, 1095, 1460, 1825],
-                    'battle ranges': [
-                        {"from": 1, "to": 5},
-                        {"from": 5, "to": 10},
-                        {"from": 10, "to": 20},
-                        {"from": 20, "to": 30},
-                        {"from": 30, "to": 40},
-                        {"from": 40, "to": 50},
-                        {"from": 50}
-                    ],
                     'watermark text': '@WOTC_Tracker',
                     'wg api key': 'DEMO'
                 }
             )
 
 
-def query_es_for_graphs(config):
+async def query_for_graphs(config, conn):
     now = datetime.utcnow()
+    now_s = now.strftime('%Y-%m-%d')
     then = now - timedelta(days=config['days'])
-    es = Elasticsearch(**config['elasticsearch'])
-    # Setup queries
-    battles_query['query']['bool'][
-        'must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    battles_query['query']['bool'][
-        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
-    players_query['query']['bool'][
-        'must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    players_query['query']['bool'][
-        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
-    new_players_query['query']['bool'][
-        'must'][-1]['range']['created_at']['gte'] = then.strftime('%Y-%m-%d')
-    new_players_query['query']['bool'][
-        'must'][-1]['range']['created_at']['lt'] = now.strftime('%Y-%m-%d')
-    # Query Elasticsearch
-    battles = es.search(index=config['battle index'], body=battles_query)
-    players = es.search(index=config['battle index'], body=players_query)
-    newplayers = es.search(index='players', body=new_players_query)
+    then_s = then.strftime('%Y-%m-%d')
+
     # Filter numbers
-    battles_xbox = []
-    battles_ps = []
-    players_xbox = []
-    players_ps = []
-    newplayers_xbox = []
-    newplayers_ps = []
-    averages_xbox = []
-    averages_ps = []
-    for bucket in battles['aggregations']['2']['buckets']:
-        if not bucket['3']['buckets']:
-            battles_xbox.append(0)
-            battles_ps.append(0)
-            continue
-        for subbucket in bucket['3']['buckets']:
-            if subbucket['key'] == 'xbox':
-                battles_xbox.append(subbucket['1']['value'])
-            else:
-                battles_ps.append(subbucket['1']['value'])
-    for bucket in players['aggregations']['2']['buckets']:
-        if not bucket['3']['buckets']:
-            players_xbox.append(0)
-            players_ps.append(0)
-            continue
-        for subbucket in bucket['3']['buckets']:
-            if subbucket['key'] == 'xbox':
-                players_xbox.append(subbucket['doc_count'])
-            else:
-                players_ps.append(subbucket['doc_count'])
-    for bucket in newplayers['aggregations']['2']['buckets']:
-        if not bucket['3']['buckets']:
-            newplayers_xbox.append(0)
-            newplayers_ps.append(0)
-        for subbucket in bucket['3']['buckets']:
-            if subbucket['key'] == 'xbox':
-                newplayers_xbox.append(subbucket['doc_count'])
-            else:
-                newplayers_ps.append(subbucket['doc_count'])
-    for b, p in zip(battles_xbox, players_xbox):
-        averages_xbox.append(b / p)
-    for b, p in zip(battles_ps, players_ps):
-        averages_ps.append(b / p)
-    dates = [b['key_as_string'].split('T')[0] for b in players[
-        'aggregations']['2']['buckets']]
-    newplayers_dates = [b['key_as_string'].split('T')[0] for b in newplayers[
-        'aggregations']['2']['buckets']]
-    return dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps, averages_xbox, averages_ps
+    dates = [(then + timedelta(days=i)).date() for i in range((now - then).days)]
+    battles = {
+        'xbox': OrderedDict((k, 0) for k in dates),
+        'ps': OrderedDict((k, 0) for k in dates)
+    }
+    players = {
+        'xbox': OrderedDict((k, 0) for k in dates),
+        'ps': OrderedDict((k, 0) for k in dates)
+    }
+    newplayers = {
+        'xbox': OrderedDict((k, 0) for k in dates),
+        'ps': OrderedDict((k, 0) for k in dates)
+    }
+    averages = {
+        'xbox': OrderedDict((k, 0) for k in dates),
+        'ps': OrderedDict((k, 0) for k in dates)
+    }
+
+    # Query database
+    results = await conn.fetch(battles_query.format(then_s, now_s))
+    for record in results:
+        battles[record['console']][record['_date']] = record['sum']
+
+    results = await conn.fetch(players_query.format(then_s, now_s))
+    for record in results:
+        players[record['console']][record['_date']] = record['count']
+
+    results = await conn.fetch(new_players_query.format(then_s, now_s))
+    for record in results:
+        newplayers[record['console']][record['created_at']] = record['count']
+
+    for d, b, p in zip(dates, battles['xbox'].values(), players['xbox'].values()):
+        averages['xbox'][d] = (b / p) if p != 0 else 0
+
+    for d, b, p in zip(dates, battles['ps'].values(), players['ps'].values()):
+        averages['ps'][d] = (b / p) if p != 0 else 0
+
+    return (
+        dates, battles['xbox'], battles['ps'], 
+        players['xbox'], players['ps'], newplayers['xbox'], newplayers['ps'],
+        averages['xbox'], averages['ps']
+    )
 
 
-def query_es_for_unique(config):
+async def query_for_unique(config, conn):
     now = datetime.utcnow()
-    es = Elasticsearch(**config['elasticsearch'])
     unique = {'Xbox': [], 'Playstation': []}
-    unique_count_query['query']['bool'][
-        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
     for earliest in config['unique']:
-        unique_count_query['query']['bool']['must'][-1]['range']['date'][
-            'gte'] = (now - timedelta(days=earliest)).strftime('%Y-%m-%d')
-        results = es.search(index=config['battle index'], body=unique_count_query)
-        for bucket in results['aggregations']['2']['buckets']:
+        results = await conn.fetch(unique_count_query.format((now - timedelta(days=earliest)).strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
+        for bucket in results:
             if bucket['key'] == 'xbox':
                 unique['Xbox'].append(bucket['1']['value'])
             else:
@@ -688,8 +217,7 @@ def query_es_for_unique(config):
     return unique
 
 
-def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_dates, newplayers_xbox, newplayers_ps, averages_xbox, averages_ps, watermark_text='@WOTC_Tracker'):
-    shifted_dates = [(datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d') for d in dates]
+def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, players_ps, newplayers_xbox, newplayers_ps, averages_xbox, averages_ps, watermark_text='@WOTC_Tracker'):
     # Players PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150)
@@ -698,12 +226,13 @@ def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, player
     ax1 = fig.add_subplot(111)
     ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
-    ax1.set_xticklabels(shifted_dates, ha='right')
-    ax1.plot(shifted_dates, players_xbox, color='green', linewidth=2, label='Xbox')
-    ax1.plot(shifted_dates, players_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticks(dates, ha='right')
+    ax1.plot(dates, players_xbox.values(), color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, players_ps.values(), color='blue', linewidth=2, label='Playstation')
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.savefig(PLAYERS_PNG)
     del fig
     # Battles PNG
@@ -714,12 +243,13 @@ def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, player
     ax1 = fig.add_subplot(111)
     ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
-    ax1.set_xticklabels(shifted_dates, ha='right')
-    ax1.plot(shifted_dates, battles_xbox, color='green', linewidth=2, label='Xbox')
-    ax1.plot(shifted_dates, battles_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticks(dates, ha='right')
+    ax1.plot(dates, battles_xbox.values(), color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, battles_ps.values(), color='blue', linewidth=2, label='Playstation')
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.savefig(BATTLES_PNG)
     del fig
     # New Players PNG
@@ -730,12 +260,13 @@ def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, player
     ax1 = fig.add_subplot(111)
     ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
-    ax1.set_xticklabels(dates, ha='right')
-    ax1.plot(newplayers_dates, newplayers_xbox, color='green', linewidth=2, label='Xbox')
-    ax1.plot(newplayers_dates, newplayers_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticks(dates, ha='right')
+    ax1.plot(dates, newplayers_xbox.values(), color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, newplayers_ps.values(), color='blue', linewidth=2, label='Playstation')
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.savefig(NEWPLAYERS_PNG)
     del fig
     # Averages PNG
@@ -746,39 +277,23 @@ def create_activity_graphs(dates, battles_xbox, battles_ps, players_xbox, player
     ax1 = fig.add_subplot(111)
     ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
-    ax1.set_xticklabels(shifted_dates, ha='right')
-    ax1.plot(shifted_dates, averages_xbox, color='green', linewidth=2, label='Xbox')
-    ax1.plot(shifted_dates, averages_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticks(dates, ha='right')
+    ax1.plot(dates, averages_xbox.values(), color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, averages_ps.values(), color='blue', linewidth=2, label='Playstation')
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.savefig(AVERAGE_PNG)
     del fig
 
 
-def query_es_for_active_accounts(config):
+async def query_for_active_accounts(config, conn):
     now = datetime.utcnow()
     then = now - timedelta(days=1)
-    es = Elasticsearch(**config['elasticsearch'])
-    personal_players_query['query']['bool']['must'][-1]['range']['date']['gt'] = then.strftime('%Y-%m-%d')
-    personal_players_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    
+    player_info = await conn.fetch(personal_players_query.format(then.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
 
-    # Get all account IDs of active players
-    hits = []
-    response = es.search(index=config['battle index'], body=personal_players_query, scroll='30s')
-    while len(response['hits']['hits']):
-        hits.extend(response['hits']['hits'])
-        response = es.scroll(scroll_id=response['_scroll_id'], scroll='3s')
-
-    flattened = [doc['_source']['account_id'] for doc in hits]
-
-    # Query account information to get age details
-    player_info_extracted = []
-    for i in range(0, len(flattened), 10000):
-        active_player_info = es.mget(index='players', doc_type='player', body={'ids': flattened[i:i+10000]}, _source=['account_id', 'console', 'created_at'])
-        player_info_extracted.extend([doc['_source'] for doc in active_player_info['docs']])
-
-    sorted_player_info = sorted(player_info_extracted, key = lambda d: d['created_at'])
     buckets = {
         "xbox": OrderedDict((v, 0) for v in sorted(config['account age'])),
         "ps": OrderedDict((v, 0) for v in sorted(config['account age'])),
@@ -789,8 +304,8 @@ def query_es_for_active_accounts(config):
     buckets['xbox']['other'] = 0
     buckets['ps']['other'] = 0
     buckets['all']['other'] = 0
-    for player in sorted_player_info:
-        delta = now - datetime.strptime(player['created_at'], '%Y-%m-%dT%H:%M:%S')
+    for player in player_info:
+        delta = now - player['created_at']
         for key in buckets['all'].keys():
             if not isinstance(key, int):
                 buckets['all'][key] += 1
@@ -927,25 +442,21 @@ def create_account_age_chart(buckets, watermark_text='@WOTC_Tracker'):
     del fig
 
 
-def query_es_for_accounts_by_battles(config):
+async def query_for_accounts_by_battles(config, conn):
     now = datetime.utcnow()
     then = now - timedelta(days=1)
-    es = Elasticsearch(**config['elasticsearch'])
-    accounts_per_battles_range_query['query']['bool']['must'][-1]['range']['date']['gt'] = then.strftime('%Y-%m-%d')
-    accounts_per_battles_range_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
-    if 'battle ranges' in config:
-        accounts_per_battles_range_query['aggs']['2']['range']['ranges'] = config['battle ranges']
+    
+    response = await conn.fetch(accounts_per_battles_range_query.format(then.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
+    keys = sorted(set([r['Range'] for r in response]), key=lambda k: int(k.split('-')[0]))
 
-    response = es.search(index=config['battle index'], body=accounts_per_battles_range_query)
     buckets = {
-        "xbox": OrderedDict((v, 0) for v in response['aggregations']['2']['buckets'].keys()),
-        "ps": OrderedDict((v, 0) for v in response['aggregations']['2']['buckets'].keys()),
-        "all": OrderedDict((v, 0) for v in response['aggregations']['2']['buckets'].keys()),
+        "xbox": OrderedDict((k, 0) for k in keys),
+        "ps": OrderedDict((k, 0) for k in keys),
+        "all": OrderedDict((k, 0) for k in keys),
     }
-    for key, value in response['aggregations']['2']['buckets'].items():
-        buckets['all'][key] = value['doc_count']
-        for bucket in value['3']['buckets']:
-            buckets[bucket['key']][key] = bucket['doc_count']
+    for record in response:
+        buckets['all'][record['Range']] += record['Count of Players']
+        buckets[record['console']][record['Range']] = record['Count of Players']
     return buckets
 
 
@@ -959,11 +470,7 @@ def create_accounts_by_battles_chart(buckets, watermark_text='@WOTC_Tracker'):
     ax1.axis('equal')
     size = 0.125
 
-    outer_labels = []
-    prev = 0
-    for key in buckets['all'].keys():
-        parts = key.split('-')
-        outer_labels.append('{}-{} battles'.format(int(float(parts[0])) if parts[0] != '*' else parts[0], int(float(parts[1])) - 1 if parts[1] != '*' else parts[1]))
+    outer_labels = [b + ' battles' for b in buckets['all'].keys()]
 
     # Outer pie chart
     outer_cmap = plt.get_cmap("binary")
@@ -1037,28 +544,22 @@ def create_accounts_by_battles_chart(buckets, watermark_text='@WOTC_Tracker'):
     del fig
 
 
-def query_five_battles_a_day_minimum(config):
+async def query_five_battles_a_day_minimum(config, conn):
     now = datetime.utcnow()
     then = now - timedelta(days=config['days'])
-    es = Elasticsearch(**config['elasticsearch'])
-    five_battles_a_day_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
-    five_battles_a_day_query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    response = es.search(index=config['battle index'], body=five_battles_a_day_query)
+
+    response = await conn.fetch(five_battles_a_day_query.format(then.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
+    keys = [(then + timedelta(days=i)).date() for i in range((now - then).days)]
 
     buckets = {
-        "xbox": OrderedDict(),
-        "ps": OrderedDict(),
-        "all": OrderedDict()
+        "xbox": OrderedDict((k, 0) for k in keys),
+        "ps": OrderedDict((k, 0) for k in keys),
+        "all": OrderedDict((k, 0) for k in keys)
     }
 
-    for bucket in response['aggregations']['4']['buckets']:
-        key = bucket['key_as_string'].split('T')[0]
-        buckets['xbox'][key] = 0
-        buckets['ps'][key] = 0
-        buckets['all'][key] = 0
-        for subbucket in bucket['3']['buckets']:
-            buckets[subbucket['key']][key] = subbucket['2']['buckets']['5.0-*']['doc_count']
-        buckets['all'][key] = buckets['xbox'][key] + buckets['ps'][key]
+    for record in response:
+        buckets['all'][record['_date']] += record['count']
+        buckets[record['console']][record['_date']] += record['count']
 
     return buckets
 
@@ -1071,7 +572,7 @@ def create_five_battles_minimum_chart(buckets, watermark_text='@WOTC_Tracker'):
     ax1 = fig.add_subplot(111)
 
     width = 0.25
-    keys = [datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1) for d in buckets['all'].keys()]
+    keys = [datetime(d.year, d.month, d.day) for d in buckets['all'].keys()]  # datetime.date to datetime.datetime
     xkeys = [d - timedelta(hours=3) for d in keys]
     pkeys = [d + timedelta(hours=3) for d in keys]
     xbox_bars = ax1.bar(xkeys, buckets['xbox'].values(), width=width, color='g')
@@ -1091,62 +592,39 @@ def create_five_battles_minimum_chart(buckets, watermark_text='@WOTC_Tracker'):
     fig.savefig(FIVEADAY_PNG)
 
 
-def query_long_term_data(config, filter_server_failures=True):
+async def query_long_term_data(config, conn, filter_server_failures=True):
     now = datetime.utcnow()
     then = now - timedelta(days=config.get('long term', 90) + 1)
-    es = Elasticsearch(**config['elasticsearch'])
-    # Setup queries
-    battles_query['query']['bool'][
-        'must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    battles_query['query']['bool'][
-        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
-    players_query['query']['bool'][
-        'must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    players_query['query']['bool'][
-        'must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
+    dates = [(then + timedelta(days=i)).date() for i in range((now - then).days)]
 
-    players = es.search(index=config['battle index'], body=players_query)
-    battles = es.search(index=config['battle index'], body=battles_query)
+    players = await conn.fetch(players_query.format(then.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
+    battles = await conn.fetch(battles_query.format(then.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
 
     players_buckets = {
-        "xbox": OrderedDict(),
-        "ps": OrderedDict(),
-        "all": OrderedDict()
+        "xbox": OrderedDict((k, 0) for k in dates),
+        "ps": OrderedDict((k, 0) for k in dates),
+        "all": OrderedDict((k, 0) for k in dates)
     }
 
     battles_buckets = {
-        "xbox": OrderedDict(),
-        "ps": OrderedDict(),
-        "all": OrderedDict()
+        "xbox": OrderedDict((k, 0) for k in dates),
+        "ps": OrderedDict((k, 0) for k in dates),
+        "all": OrderedDict((k, 0) for k in dates)
     }
 
     average_battles_per_day_buckets = {
-        "xbox": OrderedDict(),
-        "ps": OrderedDict(),
-        "all": OrderedDict()
+        "xbox": OrderedDict((k, 0) for k in dates),
+        "ps": OrderedDict((k, 0) for k in dates),
+        "all": OrderedDict((k, 0) for k in dates)
     }
 
-    for bucket in players['aggregations']['2']['buckets']:
-        key = bucket['key_as_string'].split('T')[0]
-        players_buckets['xbox'][key] = 0
-        players_buckets['ps'][key] = 0
-        players_buckets['all'][key] = 0
-        if not bucket['3']['buckets']:
-            continue
-        for subbucket in bucket['3']['buckets']:
-            players_buckets[subbucket['key']][key] = subbucket['doc_count']
-        players_buckets['all'][key] = players_buckets['xbox'][key] + players_buckets['ps'][key]
+    for record in battles:
+        battles_buckets['all'][record['_date']] += record['sum']
+        battles_buckets[record['console']][record['_date']] = record['sum']
 
-    for bucket in battles['aggregations']['2']['buckets']:
-        key = bucket['key_as_string'].split('T')[0]
-        battles_buckets['xbox'][key] = 0
-        battles_buckets['ps'][key] = 0
-        battles_buckets['all'][key] = 0
-        if not bucket['3']['buckets']:
-            continue
-        for subbucket in bucket['3']['buckets']:
-            battles_buckets[subbucket['key']][key] = subbucket['1']['value']
-        battles_buckets['all'][key] = battles_buckets['xbox'][key] + battles_buckets['ps'][key]
+    for record in players:
+        players_buckets['all'][record['_date']] += record['count']
+        players_buckets[record['console']][record['_date']] = record['count']
 
     if filter_server_failures:
         skip_next = False
@@ -1179,32 +657,21 @@ def query_long_term_data(config, filter_server_failures=True):
             average_battles_per_day_buckets['ps'][key] = battles_buckets['ps'][key] / players_buckets['ps'][key]
             average_battles_per_day_buckets['all'][key] = (battles_buckets['xbox'][key] + battles_buckets['ps'][key]) / (players_buckets['xbox'][key] + players_buckets['ps'][key])
 
-    delkey = list(players_buckets['all'].keys())[0]
-    # delkey = list(battles_buckets['all'].keys())[0]
-    del players_buckets['all'][key]
-    del players_buckets['xbox'][key]
-    del players_buckets['ps'][key]
-    del battles_buckets['all'][key]
-    del battles_buckets['xbox'][key]
-    del battles_buckets['ps'][key]
-    del average_battles_per_day_buckets['xbox'][key]
-    del average_battles_per_day_buckets['ps'][key]
-    del average_battles_per_day_buckets['all'][key]
-
     return players_buckets, battles_buckets, average_battles_per_day_buckets
 
 
 def create_long_term_charts(players_buckets, battles_buckets, average_battles_per_day_buckets, watermark_text='@WOTC_Tracker'):
-    dates = [datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1) for d in players_buckets['all'].keys()]
+    dates = list(players_buckets['all'].keys())
     # Players PNG
     plt.clf()
     fig = plt.figure(figsize=(24, 8), dpi=150)
     fig.suptitle('Active Accounts Per Platform (long view)')
     ax1 = fig.add_subplot(111)
+    ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.set_xticks(dates)
     ax1.plot(dates, players_buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
     ax1.plot(dates, players_buckets['ps'].values(), color='blue', linewidth=2, label='Playstation')
-    ax1.set_xticks(dates)
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, -0.15, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
@@ -1219,10 +686,11 @@ def create_long_term_charts(players_buckets, battles_buckets, average_battles_pe
     fig = plt.figure(figsize=(24, 8), dpi=150)
     fig.suptitle('Total Battles Per Platform (long view)')
     ax1 = fig.add_subplot(111)
+    ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.set_xticks(dates)
     ax1.plot(dates, battles_buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
     ax1.plot(dates, battles_buckets['ps'].values(), color='blue', linewidth=2, label='Playstation')
-    ax1.set_xticks(dates)
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, -0.15, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
@@ -1237,10 +705,11 @@ def create_long_term_charts(players_buckets, battles_buckets, average_battles_pe
     fig = plt.figure(figsize=(24, 8), dpi=150)
     fig.suptitle('Average Battles Played Per Account Per Platform (long view)')
     ax1 = fig.add_subplot(111)
+    ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
+    ax1.set_xticks(dates)
     ax1.plot(dates, average_battles_per_day_buckets['xbox'].values(), color='green', linewidth=2, label='Xbox')
     ax1.plot(dates, average_battles_per_day_buckets['ps'].values(), color='blue', linewidth=2, label='Playstation')
-    ax1.set_xticks(dates)
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, -0.15, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
@@ -1368,61 +837,27 @@ def share_unique_with_twitter(config, unique):
         )
 
 
-def build_cw_tanks_list(config):
-    api = 'https://api-console.worldoftanks.com/wotx/encyclopedia/vehicles/'
-    params = {
-        'application_id': config['wg api key'],
-        'fields': 'era,tank_id'
-    }
-    data = get(api, params=params).json()['data']
-    return ' OR '.join(
-        list(
-            map(
-                lambda t: 'tank_id:{}'.format(t['tank_id']),
-                filter(lambda t: t['era'] != '', data.values())
-                )
-            )
-        )
-
-
-def query_es_for_top_tanks(config, era):
+async def query_for_top_tanks(config):
     now = datetime.utcnow()
     then = now - timedelta(days=1)
-    es = Elasticsearch(**config['elasticsearch'])
-    if era == 'ww2':
-        query = ww2_popular_tanks_query
-    elif era == 'cw':
-        query = cw_popular_tanks_query
-    # Setup query
-    query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
-    # Query Elasticsearch
-    response = es.search(index=config['tank index'], body=query)
+
+    response = await conn.fetch(popular_tanks_query.format(then.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
     buckets = {
-        'xbox': OrderedDict(),
-        'ps': OrderedDict()
+        'CW': {
+            'Xbox': OrderedDict(),
+            'Playstation': OrderedDict()
+        },
+        'WW2': {
+            'Xbox': OrderedDict(),
+            'Playstation': OrderedDict()
+        }
     }
-    for bucket in response['aggregations']['2']['buckets']:
-        for subbucket in bucket['4']['buckets']:
-            key = subbucket['key']
-            for tank in subbucket['3']['buckets']:
-                buckets[key][tank['key']] = int(tank['1']['value'])
+    for record in response:
+        console = 'Xbox' if record['console'] == 'xbox' else 'Playstation'
+        era = 'CW' if record['era'] != '' else 'WW2'
+        if len(buckets[era][console]) < 5:
+            bucket[era][console][record['short_name']] = record['tot_batt']
     return buckets
-
-
-def query_for_tank_info(tanks):
-    url = 'https://wotconsole.ru/api/tankopedia/en/{}.json'
-    new_tanks = {
-        'xbox': OrderedDict(),
-        'ps': OrderedDict()
-    }
-    for plat, t in tanks.items():
-        for tank, battles in t.items():
-            response = get(url.format(tank))
-            new_tanks[plat][response.json()['info']['user_string']] = battles
-    new_tanks['playstation'] = new_tanks['ps']
-    del new_tanks['ps']
-    return new_tanks
 
 
 def share_top_tanks(config, era, top, day):
@@ -1446,98 +881,76 @@ def share_top_tanks(config, era, top, day):
         )
 
 
-def query_es_for_mode_battles_difference(config, long_term=False):
+async def query_for_mode_battles_difference(config, conn, long_term=False):
     now = datetime.utcnow()
-    then = now - timedelta(days=config['days'] if not long_term else config['long term'])
-    es = Elasticsearch(**config['elasticsearch'])
-    # Setup query
-    battles_query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    battles_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
-    cw_popular_tanks_query['query']['bool']['must'][-1]['range']['date']['gte'] = then.strftime('%Y-%m-%d')
-    cw_popular_tanks_query['query']['bool']['must'][-1]['range']['date']['lte'] = now.strftime('%Y-%m-%d')
-    # Query Elasticsearch
-    total_battles_response = es.search(index=config['battle index'], body=battles_query)
-    cw_battles_response = es.search(index=config['tank index'], body=cw_popular_tanks_query)
-    dates = [b['key_as_string'].split('T')[0] for b in total_battles_response[
-        'aggregations']['2']['buckets']]
+    then = now - timedelta(days=config['days'] if not long_term else config.get('long term', 90))
+
+    battles = await conn.fetch(mode_battles_query.format(then.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
+    dates = [(then + timedelta(days=i)).date() for i in range((now - then).days)]
     # Filter numbers
-    ww2_battles_xbox = OrderedDict()
-    ww2_battles_ps = OrderedDict()
-    cw_battles_xbox = OrderedDict()
-    cw_battles_ps = OrderedDict()
-    percent_cw_xbox = OrderedDict()
-    percent_cw_ps = OrderedDict()
-    for d in dates:
-        ww2_battles_xbox[d] = 0
-        ww2_battles_ps[d] = 0
-        cw_battles_xbox[d] = 0
-        cw_battles_ps[d] = 0
-        percent_cw_xbox[d] = None
-        percent_cw_ps[d] = None
-    for bucket in total_battles_response['aggregations']['2']['buckets']:
-        if not bucket['3']['buckets']:
-            continue
-        for subbucket in bucket['3']['buckets']:
-            if subbucket['key'] == 'xbox':
-                ww2_battles_xbox[bucket['key_as_string'].split('T')[0]] = subbucket['1']['value']
-            else:
-                ww2_battles_ps[bucket['key_as_string'].split('T')[0]] = subbucket['1']['value']
-    for bucket in cw_battles_response['aggregations']['2']['buckets']:
-        if not bucket['4']['buckets']:
-            continue
-        for subbucket in bucket['4']['buckets']:
-            if subbucket['key'] == 'xbox':
-                cw_battles_xbox[bucket['key_as_string'].split('T')[0]] = subbucket['1']['value']
-            else:
-                cw_battles_ps[bucket['key_as_string'].split('T')[0]] = subbucket['1']['value']
-    for i in range(len(dates)):
-        percent_cw_xbox[dates[i]] = cw_battles_xbox[dates[i]] / ww2_battles_xbox[dates[i]]
-        percent_cw_ps[dates[i]] = cw_battles_ps[dates[i]] / ww2_battles_ps[dates[i]]
-        ww2_battles_xbox[dates[i]] = ww2_battles_xbox[dates[i]] - cw_battles_xbox[dates[i]]
-        ww2_battles_ps[dates[i]] = ww2_battles_ps[dates[i]] - cw_battles_ps[dates[i]]
-    return dates, list(ww2_battles_xbox.values()), list(ww2_battles_ps.values()), list(cw_battles_xbox.values()), list(cw_battles_ps.values()), list(percent_cw_xbox.values()), list(percent_cw_ps.values())
+    buckets = {
+        'WW2': {
+            'xbox': OrderedDict((d, 0) for d in dates),
+            'ps': OrderedDict((d, 0) for d in dates)
+        },
+        'CW': {
+            'xbox': OrderedDict((d, 0) for d in dates),
+            'ps': OrderedDict((d, 0) for d in dates)
+        },
+        'percent': {
+            'xbox': OrderedDict((d, 0) for d in dates),
+            'ps': OrderedDict((d, 0) for d in dates)
+        }
+    }
+
+    for record in battles:
+        buckets[record['t_era']][record['console']][record['_date']] = record['sum']
+
+    for key in buckets['percent']:
+        for d in dates:
+            total = buckets['CW'][key][d] + buckets['WW2'][key][d]
+            if total != 0:
+                buckets['percent'][key][d] = buckets['CW'][key][d] / total
+
+    return dates, buckets
 
 
-def create_mode_difference_graph(dates, ww2_battles_xbox, ww2_battles_ps, cw_battles_xbox, cw_battles_ps, percent_cw_xbox, percent_cw_ps, long_term=False, watermark_text='@WOTC_Tracker'):
-    shifted_dates = [(datetime.strptime(d, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d') for d in dates]
+def create_mode_difference_graph(dates, buckets, long_term=False, watermark_text='@WOTC_Tracker'):
     # Mode PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150) if not long_term else plt.figure(figsize=(24, 8), dpi=150)
-    fig.suptitle('Estimated breakdown of battles between CW and WW2, per platform' if not long_term else 'Estimated breakdown of battles between CW and WW2, per platform (long term)')
+    fig.suptitle('Estimated breakdown of battles between CW and WW2, per platform{}'.format('' if not long_term else ' (long term'))
     # ax1 = plt.axes()
     ax1 = fig.add_subplot(111)
     ax1.tick_params(axis='x', labelrotation=45)
     ax1.ticklabel_format(useOffset=False, style='plain')
-    ax1.set_xticklabels(shifted_dates, ha='right')
-    ax1.plot(shifted_dates, ww2_battles_xbox, color='darkgreen', linewidth=2, label='WW2: Xbox')
-    ax1.plot(shifted_dates, cw_battles_xbox, color='lightgreen', linewidth=2, label='CW: Xbox')
-    ax1.plot(shifted_dates, ww2_battles_ps, color='darkblue', linewidth=2, label='WW2: Playstation')
-    ax1.plot(shifted_dates, cw_battles_ps, color='lightblue', linewidth=2, label='CW: Playstation')
+    ax1.set_xticks(dates, ha='right')
+    ax1.plot(dates, buckets['WW2']['xbox'].values(), color='darkgreen', linewidth=2, label='WW2: Xbox')
+    ax1.plot(dates, buckets['CW']['xbox'].values(), color='lightgreen', linewidth=2, label='CW: Xbox')
+    ax1.plot(dates, buckets['WW2']['ps'].values(), color='darkblue', linewidth=2, label='WW2: Playstation')
+    ax1.plot(dates, buckets['CW']['ps'].values(), color='lightblue', linewidth=2, label='CW: Playstation')
     ax1.set_ylim(bottom=0)
-    # for i in range(len(shifted_dates)):
-    #     xbox_text = ax1.annotate(annotations_xbox[i], (shifted_dates[i], ww2_battles_xbox[i]), verticalalignment='bottom', size=12 if not long_term else 8)
-    #     ps_text = ax1.annotate(annotations_ps[i], (shifted_dates[i], ww2_battles_ps[i]), verticalalignment='bottom', size=12 if not long_term else 8)
-    #     xbox_text.set_rotation(90)
-    #     ps_text.set_rotation(90)
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.savefig(MODEBREAKDOWN_PNG if not long_term else MODEBREAKDOWNLONG_PNG)
     del fig
     # Mode Percent PNG
     plt.clf()
     fig = plt.figure(figsize=(11, 8), dpi=150) if not long_term else plt.figure(figsize=(24, 8), dpi=150)
-    fig.suptitle('Estimated percentage of battles taking place in CW, per platform' if not long_term else 'Estimated percentage of battles taking place in CW, per platform (long term)')
+    fig.suptitle('Estimated percentage of battles taking place in CW, per platform{}'.format('' if not long_term else ' (long term)'))
     # ax1 = plt.axes()
     ax1 = fig.add_subplot(111)
     ax1.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
     ax1.tick_params(axis='x', labelrotation=45)
-    ax1.set_xticklabels(shifted_dates, ha='right')
-    ax1.plot(shifted_dates, percent_cw_xbox, color='green', linewidth=2, label='Xbox')
-    ax1.plot(shifted_dates, percent_cw_ps, color='blue', linewidth=2, label='Playstation')
+    ax1.set_xticks(dates, ha='right')
+    ax1.plot(dates, buckets['percent']['xbox'].values(), color='green', linewidth=2, label='Xbox')
+    ax1.plot(dates, buckets['percent']['ps'].values(), color='blue', linewidth=2, label='Playstation')
     ax1.grid()
     ax1.legend()
     ax1.text(0.5, 1.05, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.savefig(MODEBREAKDOWNPERCENT_PNG if not long_term else MODEBREAKDOWNPERCENTLONG_PNG)
     del fig
 
@@ -1566,9 +979,88 @@ def get_universal_params(config):
     return params
 
 
+async def make_selection(config, args):
+    additional_params = get_universal_params(config)
+    now = datetime.utcnow()
+    db = await connect(**config['database'])
+    if args.top_cw_tanks or args.top_ww2_tanks:
+        popular_tanks = await query_for_top_tanks(config, db)
+    if args.activity_graphs:
+        try:
+            create_activity_graphs(*(await query_for_graphs(config, db)), **additional_params)
+            if args.upload:
+                upload_activity_graphs_to_twitter(config)
+        except Exception as e:
+            # print(e)
+            traceback.print_exc()
+    if args.account_age:
+        try:
+            create_account_age_chart(await query_for_active_accounts(config, db), **additional_params)
+            if args.upload:
+                upload_account_age_graph_to_twitter(config)
+        except Exception as e:
+            # print(e)
+            traceback.print_exc()
+    if args.accounts_by_battles:
+        try:
+            create_accounts_by_battles_chart(await query_for_accounts_by_battles(config, db), **additional_params)
+            if args.upload:
+                upload_accounts_by_battles_chart_to_twitter(config)
+        except Exception as e:
+            # print(e)
+            traceback.print_exc()
+    if args.five_battles_min:
+        try:
+            create_five_battles_minimum_chart(await query_five_battles_a_day_minimum(config, db), **additional_params)
+            if args.upload:
+                upload_five_battles_minimum_chart_to_twitter(config)
+        except Exception as e:
+            # print(e)
+            traceback.print_exc()
+    # Limit long-term views to beginning of month to review previous month's history
+    if args.long_term:
+        if now.day == 1:
+            try:
+                create_long_term_charts(*await query_long_term_data(config, db, config.get('omit errors long term', True)), **additional_params)
+                if args.mode_breakdown:
+                    create_mode_difference_graph(*await query_for_mode_battles_difference(config, db, long_term=True), long_term=True, **additional_params)
+                if args.upload:
+                    upload_long_term_charts(config)
+                    if args.mode_breakdown:
+                        upload_long_term_mode_charts(config)
+            except Exception as e:
+                # print(e)
+                traceback.print_exc()
+    if args.share_unique:
+        try:
+            share_unique_with_twitter(config, await query_for_unique(config, db))
+        except Exception as e:
+            # print(e)
+            traceback.print_exc()
+    if args.top_cw_tanks:
+        try:
+            share_top_tanks(config, 'CW', popular_tanks['CW'], (now - timedelta(days=1)).strftime('%Y-%m-%d'))
+        except Exception as e:
+            # print(e)
+            traceback.print_exc()
+    if args.top_ww2_tanks:
+        try:
+            share_top_tanks(config, 'WW2', popular_tanks['WW2'], (now - timedelta(days=1)).strftime('%Y-%m-%d'))
+        except Exception as e:
+            # print(e)
+            traceback.print_exc()
+    if args.mode_breakdown:
+        try:
+            create_mode_difference_graph(*await query_for_mode_battles_difference(config, db), **additional_params)
+            if args.upload:
+                upload_mode_breakdown_to_twitter(config)
+        except Exception as e:
+            # print(e)
+            traceback.print_exc()
+
+
 if __name__ == '__main__':
-    agp = ArgumentParser(
-        description='Bot for processing tracker data and uploading to Twitter')
+    agp = ArgumentParser(description='Bot for processing tracker data and uploading to Twitter')
     agp.add_argument('config', help='Config file location')
     agp.add_argument('-u', '--upload', help='Upload to twitter', action='store_true')
     agp.add_argument('--activity-graphs', action='store_true')
@@ -1582,79 +1074,6 @@ if __name__ == '__main__':
     agp.add_argument('--mode-breakdown', action='store_true')
     args = agp.parse_args()
     config = manage_config('read', args.config)
-    additional_params = get_universal_params(config)
-    now = datetime.utcnow()
-    if args.top_cw_tanks or args.top_ww2_tanks or args.mode_breakdown or args.long_term:
-        CW_TANKS = build_cw_tanks_list(config)
-        cw_popular_tanks_query['query']['bool']['must'][0]['query_string']['query'] = CW_TANKS
-        ww2_popular_tanks_query['query']['bool']['must'][0]['query_string']['query'] = 'NOT (' + CW_TANKS + ')'
-    if args.activity_graphs:
-        try:
-            create_activity_graphs(*query_es_for_graphs(config), **additional_params)
-            if args.upload:
-                upload_activity_graphs_to_twitter(config)
-        except Exception as e:
-            # print(e)
-            traceback.print_exc()
-    if args.account_age:
-        try:
-            create_account_age_chart(query_es_for_active_accounts(config), **additional_params)
-            if args.upload:
-                upload_account_age_graph_to_twitter(config)
-        except Exception as e:
-            # print(e)
-            traceback.print_exc()
-    if args.accounts_by_battles:
-        try:
-            create_accounts_by_battles_chart(query_es_for_accounts_by_battles(config), **additional_params)
-            if args.upload:
-                upload_accounts_by_battles_chart_to_twitter(config)
-        except Exception as e:
-            # print(e)
-            traceback.print_exc()
-    if args.five_battles_min:
-        try:
-            create_five_battles_minimum_chart(query_five_battles_a_day_minimum(config), **additional_params)
-            if args.upload:
-                upload_five_battles_minimum_chart_to_twitter(config)
-        except Exception as e:
-            # print(e)
-            traceback.print_exc()
-    # Limit long-term views to beginning of month to review previous month's history
-    if args.long_term:
-        if now.day == 1:
-            try:
-                create_long_term_charts(*query_long_term_data(config, config.get('omit errors long term', True)), **additional_params)
-                create_mode_difference_graph(*query_es_for_mode_battles_difference(config, long_term=True), long_term=True, **additional_params)
-                if args.upload:
-                    upload_long_term_charts(config)
-                    upload_long_term_mode_charts(config)
-            except Exception as e:
-                # print(e)
-                traceback.print_exc()
-    if args.share_unique:
-        try:
-            share_unique_with_twitter(config, query_es_for_unique(config))
-        except Exception as e:
-            # print(e)
-            traceback.print_exc()
-    if args.top_cw_tanks:
-        try:
-            share_top_tanks(config, 'CW', query_for_tank_info(query_es_for_top_tanks(config, 'cw')), (now - timedelta(days=1)).strftime('%Y-%m-%d'))
-        except Exception as e:
-            # print(e)
-            traceback.print_exc()
-    if args.top_ww2_tanks:
-        try:
-            share_top_tanks(config, 'WW2', query_for_tank_info(query_es_for_top_tanks(config, 'ww2')), (now - timedelta(days=1)).strftime('%Y-%m-%d'))
-        except Exception as e:
-            # print(e)
-            traceback.print_exc()
-    if args.mode_breakdown:
-        try:
-            create_mode_difference_graph(*query_es_for_mode_battles_difference(config), **additional_params)
-            if args.upload:
-                upload_mode_breakdown_to_twitter(config)
-        except Exception as e:
-            # print(e)
-            traceback.print_exc()
+    if system() == 'Windows':
+        set_event_loop_policy(WindowsSelectorEventLoopPolicy())
+    run(make_selection(config, args))
