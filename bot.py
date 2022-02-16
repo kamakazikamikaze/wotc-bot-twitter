@@ -1,5 +1,5 @@
 from argparse import ArgumentParser
-from asyncio import run, set_event_loop_policy, WindowsSelectorEventLoopPolicy
+from asyncio import run
 from asyncpg import connect
 from collections import OrderedDict
 from datetime import datetime, timedelta
@@ -1075,5 +1075,6 @@ if __name__ == '__main__':
     args = agp.parse_args()
     config = manage_config('read', args.config)
     if system() == 'Windows':
+        from asyncio import set_event_loop_policy, WindowsSelectorEventLoopPolicy
         set_event_loop_policy(WindowsSelectorEventLoopPolicy())
     run(make_selection(config, args))
