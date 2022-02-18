@@ -35,7 +35,7 @@ players_query = '''
 unique_count_query = '''
     SELECT count(distinct(account_id)), console
     FROM diff_battles
-    WHERE _date >= '{}' _date < '{}'
+    WHERE _date >= '{}' AND _date < '{}'
     GROUP BY console
     ORDER BY console
 '''
@@ -206,14 +206,14 @@ async def query_for_graphs(config, conn):
 
 async def query_for_unique(config, conn):
     now = datetime.utcnow()
-    unique = {'Xbox': [], 'Playstation': []}
+    unique = {
+        'Xbox': OrderedDict((d, 0) for d in config['unique']), 
+        'Playstation': OrderedDict((d, 0) for d in config['unique'])
+    }
     for earliest in config['unique']:
         results = await conn.fetch(unique_count_query.format((now - timedelta(days=earliest)).strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
         for bucket in results:
-            if bucket['key'] == 'xbox':
-                unique['Xbox'].append(bucket['1']['value'])
-            else:
-                unique['Playstation'].append(bucket['1']['value'])
+            unique['Xbox' if bucket['console'] == 'xbox' else 'Playstation'][earliest] = bucket['count']
     return unique
 
 
@@ -827,17 +827,16 @@ def share_unique_with_twitter(config, unique):
     api = API(auth)
     status = 'Unique Active Accounts For {} Over Time\n{}'
     formatting = '{} days: {}'
-    for key, values in unique.items():
+    for platform in unique:
         api.update_status(
             status=status.format(
-                key,
-                '\n'.join(map(lambda l: formatting.format(
-                    config['unique'][values.index(l)], l), values))
+                platform,
+                '\n'.join(map(lambda l: formatting.format(*l), unique[platform].items()))
             )
         )
 
 
-async def query_for_top_tanks(config):
+async def query_for_top_tanks(config, conn):
     now = datetime.utcnow()
     then = now - timedelta(days=1)
 
@@ -856,7 +855,7 @@ async def query_for_top_tanks(config):
         console = 'Xbox' if record['console'] == 'xbox' else 'Playstation'
         era = 'CW' if record['era'] != '' else 'WW2'
         if len(buckets[era][console]) < 5:
-            bucket[era][console][record['short_name']] = record['tot_batt']
+            buckets[era][console][record['short_name']] = record['tot_batt']
     return buckets
 
 
