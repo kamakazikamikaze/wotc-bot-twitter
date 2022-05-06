@@ -1,13 +1,16 @@
 from argparse import ArgumentParser
 from asyncio import run
 from asyncpg import connect
-from collections import OrderedDict
+from calendar import monthrange
+from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta
 from json import dump, load
 from math import pi, sin, cos
 from matplotlib import pyplot as plt
 from matplotlib import dates as mdates
 from matplotlib import ticker as mtick
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib._cm_listed import _cividis_data
 from platform import system
 from requests import get
 from tweepy import OAuthHandler, API
@@ -105,6 +108,12 @@ mode_battles_query = '''
     GROUP BY console, t_era, _date
 '''
 
+active_accounts_by_total_battles = """
+    SELECT players.account_id, date_trunc('month', created_at::date) AS "created_at", diff_battles.battles AS "Diff Battles", players.battles AS "Total Battles", players.console
+    FROM diff_battles, players
+    WHERE players.account_id = diff_battles.account_id AND diff_battles._date >= '{}' AND diff_battles._date < '{}'
+"""
+
 BATTLES_PNG = '{}/tmp/battles.png'.format('.' if system() == 'Windows' else '')
 PLAYERS_PNG = '{}/tmp/players.png'.format('.' if system() == 'Windows' else '')
 NEWPLAYERS_PNG = '{}/tmp/newplayers.png'.format('.' if system() == 'Windows' else '')
@@ -119,6 +128,30 @@ MODEBREAKDOWN_PNG = '{}/tmp/modebreakdown.png'.format('.' if system() == 'Window
 MODEBREAKDOWNLONG_PNG = '{}/tmp/modebreakdownlong.png'.format('.' if system() == 'Windows' else '')
 MODEBREAKDOWNPERCENT_PNG = '{}/tmp/modebreakdownpercent.png'.format('.' if system() == 'Windows' else '')
 MODEBREAKDOWNPERCENTLONG_PNG = '{}/tmp/modebreakdownpercentlong.png'.format('.' if system() == 'Windows' else '')
+ACTIVEAGE_PNG = '{}/tmp/activeage_{{}}.png'.format('.' if system() == 'Windows' else '')
+
+def add_months(date, months):
+    months_count = date.year * 12 + date.month + months - 1
+
+    # Calculate the year
+    year = months_count // 12
+
+    # Calculate the month
+    month = months_count % 12 + 1
+
+    # Calculate the day
+    day = date.day
+    last_day_of_month = monthrange(year, month)[1]
+    if day > last_day_of_month:
+        day = last_day_of_month
+
+    new_date = datetime(year, month, day)
+    return new_date
+
+
+def diff_months(d1, d2):
+    return (d1.year - d2.year) * 12 + d1.month - d2.month
+
 
 def manage_config(mode, filename='config.json'):
     if mode == 'read':
@@ -970,6 +1003,107 @@ def upload_mode_breakdown_to_twitter(config):
     )
 
 
+async def query_active_accounts_by_registration_and_battles(conn):
+    now = datetime.utcnow()
+    then = now - timedelta(days=1)
+
+    active = await conn.fetch(active_accounts_by_total_battles.format(then.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')))
+    buckets = {
+        'xbox': defaultdict(list),
+        'ps': defaultdict(list)
+    }
+    dates = {
+        'xbox': set(),
+        'ps': set()
+    }
+    diff_battles = {
+        'xbox': list(),
+        'ps': list()
+    }
+    for player in active:
+        dates[player['console']].add(player['created_at'])
+        diff_battles[player['console']].append(player['Diff Battles'])
+        buckets[player['console']][player['created_at']].append(player)
+    
+    return buckets, dates, diff_battles
+
+
+def create_active_accounts_by_registration_and_battles_charts(buckets, dates, diff_battles, watermark_text='@WOTC_Tracker'):
+    _viridis_data = _cividis_data
+    colors = [(0, 0, 0), _viridis_data[0], _viridis_data[86], _viridis_data[192], _viridis_data[255]]
+    cvals = [0, 4, 100, 200, 300]
+    norm = plt.Normalize(min(cvals), max(cvals))
+    tuples = list(zip(map(norm, cvals), colors))
+    cmap = LinearSegmentedColormap.from_list("", tuples)
+    for platform, bucket in buckets.items():
+        plt.clf()
+        fig = plt.figure(figsize=(18, 8), dpi=150)
+        then = datetime.utcnow() - timedelta(days=1)
+        fig.suptitle("Heatmap of battles per account on {} for {}".format(then.strftime('%Y-%m-%d'), 'Xbox' if platform == 'xbox' else 'Playstation'))
+        ax1 = fig.add_subplot(111)
+        ax1.set_xlabel('Account registration date (grouped by month)')
+        ax1.set_ylabel('Battles they played yesterday')
+        fig.text(0.1, -0.2, watermark_text, horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes)
+        oldest_reg = min(dates[platform])
+        newest_reg = max(dates[platform])
+        max_battles = max(diff_battles[platform])
+        grid = [[0 for y in range(diff_months(newest_reg, oldest_reg) + 1)] for x in range(max_battles + 1)]
+        for reg, players in bucket.items():
+            x = diff_months(reg, oldest_reg)
+            for player in players:
+                grid[player['Diff Battles']][x] += 1
+        cbar = fig.colorbar(
+            ax1.pcolormesh(
+                [add_months(oldest_reg, i) for i in range(diff_months(newest_reg, oldest_reg) + 2)],
+                [i for i in range(-1, max_battles + 1)],
+                grid,
+                cmap=cmap,
+                rasterized=True,
+                antialiased=True
+            ),
+            pad=0.01
+        )
+        cbar.set_label('Total accounts')
+        above_75 = len(list(filter(lambda i: i > 75, diff_battles[platform])))
+        if above_75:
+            fig.text(
+                0.9,
+                -0.2,
+                "Note: {} accounts played more than 75 battles and are not visible here".format(above_75),
+                size=8,
+                horizontalalignment='center',
+                verticalalignment='center',
+                transform=ax1.transAxes
+            )
+        ax1.axis([oldest_reg, newest_reg, 0, 75])
+        ax1.xaxis_date()
+        ax1.grid(axis='y', alpha=0.25)
+        date_format = mdates.DateFormatter('%Y-%m')
+        ax1.xaxis.set_major_formatter(date_format)
+        fig.tight_layout()
+        fig.autofmt_xdate()
+        fig.savefig(ACTIVEAGE_PNG.format(platform))
+        del fig
+    return list(buckets.keys())
+
+
+def upload_active_accounts_by_registration_and_battles_to_twitter(config, platforms):
+    auth = OAuthHandler(
+        config['twitter']['api key'],
+        config['twitter']['api secret key'])
+    auth.set_access_token(
+        config['twitter']['access token'],
+        config['twitter']['access token secret'])
+    api = API(auth)
+    media = []
+    for platform in platforms:
+        media.append(api.media_upload(ACTIVEAGE_PNG.format(platform)))
+    api.update_status(
+        status="Visualization of active accounts by platform",
+        media_ids=[m.media_id for m in media]
+    )
+
+
 def get_universal_params(config):
     params = dict()
     watermark = config.get('watermark text', None)
@@ -1056,7 +1190,13 @@ async def make_selection(config, args):
         except Exception as e:
             # print(e)
             traceback.print_exc()
-
+    if args.battles_by_age:
+        try:
+            platforms = create_active_accounts_by_registration_and_battles_charts(*await query_active_accounts_by_registration_and_battles(db))
+            if args.upload:
+                upload_active_accounts_by_registration_and_battles_to_twitter(config, platforms)
+        except Exception as e:
+            traceback.print_exc()
 
 if __name__ == '__main__':
     agp = ArgumentParser(description='Bot for processing tracker data and uploading to Twitter')
@@ -1071,6 +1211,7 @@ if __name__ == '__main__':
     agp.add_argument('--top-cw-tanks', action='store_true')
     agp.add_argument('--top-ww2-tanks', action='store_true')
     agp.add_argument('--mode-breakdown', action='store_true')
+    agp.add_argument('--battles-by-age', action='store_true')
     args = agp.parse_args()
     config = manage_config('read', args.config)
     if system() == 'Windows':
